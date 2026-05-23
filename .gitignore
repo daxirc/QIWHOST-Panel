@@ -1,0 +1,31 @@
+# QIWHOST Panel Root Gitignore
+
+# Ignore IDEs & Local OS Files
+.idea/
+.vscode/
+.DS_Store
+*.pem
+*.log
+
+# Ignore Laravel API specific dependencies and configurations
+panel-api/vendor/
+panel-api/.env
+panel-api/.env.backup
+panel-api/.env.production
+panel-api/public/storage
+panel-api/public/build
+panel-api/public/hot
+panel-api/storage/*.key
+panel-api/storage/pail
+
+# Ignore Next.js Frontend specific dependencies and local environment parameters
+panel-frontend/node_modules/
+panel-frontend/.next/
+panel-frontend/out/
+panel-frontend/build/
+panel-frontend/.env*.local
+panel-frontend/next-env.d.ts
+panel-frontend/*.tsbuildinfo
+panel-frontend/.pnp
+panel-frontend/.pnp.js
+panel-frontend/.yarn/install-state.gz
