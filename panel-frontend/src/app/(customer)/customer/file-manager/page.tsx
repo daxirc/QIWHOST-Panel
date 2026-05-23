@@ -131,9 +131,11 @@ export default function CustomerFileManager() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["customer", "files", currentPath] });
+      refetch();
       setIsCreateOpen(false);
       setNewItemName("");
       setErrorMsg("");
+      setSelectedPaths([]);
     },
     onError: (err: any) => {
       setErrorMsg(err.response?.data?.message || "Failed to create item.");
@@ -148,6 +150,7 @@ export default function CustomerFileManager() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["customer", "files", currentPath] });
+      refetch();
       setIsRenameOpen(false);
       setRenameName("");
       setSelectedPaths([]);
@@ -163,6 +166,7 @@ export default function CustomerFileManager() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["customer", "files", currentPath] });
+      refetch();
       setIsCopyOpen(false);
       setSelectedPaths([]);
       alert("Item copied successfully.");
@@ -178,6 +182,7 @@ export default function CustomerFileManager() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["customer", "files", currentPath] });
+      refetch();
       setIsMoveOpen(false);
       setSelectedPaths([]);
       alert("Item moved successfully.");
@@ -193,6 +198,7 @@ export default function CustomerFileManager() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["customer", "files", currentPath] });
+      refetch();
       setIsDeleteOpen(false);
       setSelectedPaths([]);
     },
@@ -223,6 +229,7 @@ export default function CustomerFileManager() {
       setEditingFile(null);
       setFileContent("");
       queryClient.invalidateQueries({ queryKey: ["customer", "files", currentPath] });
+      refetch();
       alert("File saved successfully.");
     },
     onError: (err: any) => alert(err.response?.data?.message || "Failed to save file.")
@@ -236,6 +243,7 @@ export default function CustomerFileManager() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["customer", "files", currentPath] });
+      refetch();
       setIsCompressOpen(false);
       setSelectedPaths([]);
       alert("Archive created successfully.");
@@ -251,6 +259,7 @@ export default function CustomerFileManager() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["customer", "files", currentPath] });
+      refetch();
       setIsExtractOpen(false);
       setSelectedPaths([]);
       alert("Archive extracted successfully.");
@@ -266,6 +275,7 @@ export default function CustomerFileManager() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["customer", "files", currentPath] });
+      refetch();
       setIsPermsOpen(false);
       setSelectedPaths([]);
     },
@@ -455,6 +465,8 @@ export default function CustomerFileManager() {
       setUploadFiles([...copy]);
     }
     queryClient.invalidateQueries({ queryKey: ["customer", "files", currentPath] });
+    refetch();
+    setSelectedPaths([]);
   };
 
   // Selection state checkers

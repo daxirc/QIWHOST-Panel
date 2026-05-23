@@ -60,10 +60,9 @@ class ProvisionSslJob implements ShouldQueue
             ], 600);
 
             $process = new Process([
-                'sudo', 'certbot', 'certonly', '--webroot',
+                'sudo', '/snap/bin/certbot', 'certonly', '--webroot',
                 '-w', "/home/{$this->username}/public_html",
                 '-d', $this->domainName,
-                '-d', "www.{$this->domainName}",
                 '--email', 'admin@qiwhost.com',
                 '--agree-tos', '--non-interactive'
             ]);
@@ -88,6 +87,20 @@ class ProvisionSslJob implements ShouldQueue
                 'error' => null
             ], 600);
 
+            // Update ssl_certificates table
+            \DB::table('ssl_certificates')->updateOrInsert(
+                ['hosting_account_id' => $this->hostingAccountId, 'domain' => $this->domainName],
+                [
+                    'provider' => 'letsencrypt',
+                    'status' => 'active',
+                    'auto_renew' => true,
+                    'issued_at' => now(),
+                    'expires_at' => now()->addDays(90),
+                    'updated_at' => now(),
+                    'created_at' => now(),
+                ]
+            );
+
             SslCertificate::updateOrCreate(
                 ['domain' => $this->domainName],
                 [
@@ -101,10 +114,49 @@ class ProvisionSslJob implements ShouldQueue
                 ]
             );
 
-            $domain = Domain::find($this->domainId);
-            if ($domain) {
-                $domain->update(['is_secure_with_ssl' => true]);
+            $domainObj = Domain::find($this->domainId);
+            if ($domainObj) {
+                $domainObj->update(['is_secure_with_ssl' => true]);
             }
+
+            // Configure OLS SSL listener port 443
+            try {
+                $domain = $this->domainName;
+                $certPath = "/etc/letsencrypt/live/{$domain}";
+                $configFile = '/usr/local/lsws/conf/httpd_config.conf';
+                $config = file_get_contents($configFile);
+
+                // Add SSL to vhost config
+                $vhostConfFile = "/usr/local/lsws/conf/vhosts/{$domain}/vhconf.conf";
+                $vhostConf = file_get_contents($vhostConfFile);
+                if (strpos($vhostConf, 'vhssl') === false) {
+                    $sslBlock = "\nvhssl  {\n  keyFile                 {$certPath}/privkey.pem\n  certFile                {$certPath}/fullchain.pem\n  certChain               1\n  clientVerify            0\n}\n";
+                    $tempVhostFile = "/tmp/vhost_ssl_{$domain}_" . uniqid();
+                    file_put_contents($tempVhostFile, $vhostConf . $sslBlock);
+                    $mvProc = new Process(['sudo', 'mv', $tempVhostFile, $vhostConfFile]);
+                    $mvProc->run();
+                }
+
+                // Add SSL listener to httpd_config.conf if not exists
+                if (strpos($config, 'listener SSL') === false) {
+                    $sslListener = "\nlistener SSL {\n  address                  *:443\n  secure                   1\n  keyFile                  {$certPath}/privkey.pem\n  certFile                 {$certPath}/fullchain.pem\n  certChain                1\n  map                      {$domain} {$domain}\n}\n";
+                    $tempConfigFile = "/tmp/httpd_config_ssl_" . uniqid();
+                    file_put_contents($tempConfigFile, $config . $sslListener);
+                    $mvProc2 = new Process(['sudo', 'mv', $tempConfigFile, $configFile]);
+                    $mvProc2->run();
+                } else {
+                    // Add domain map to existing SSL listener
+                    $process = new Process(['sudo', 'sed', '-i',
+                        "/listener SSL {/a\\  map                      {$domain} {$domain}",
+                        $configFile
+                    ]);
+                    $process->run();
+                }
+
+                // Open port 443 in UFW
+                $process = new Process(['sudo', 'ufw', 'allow', '443/tcp']);
+                $process->run();
+            } catch (\Exception $e) {}
 
             sleep(2);
 
@@ -116,7 +168,8 @@ class ProvisionSslJob implements ShouldQueue
                 'error' => null
             ], 600);
 
-            $restartOLS = new Process(['sudo', '/usr/local/lsws/bin/lswsctrl', 'graceful']);
+            $restartOLS = new Process(['sudo', '/usr/local/lsws/bin/lswsctrl', 'reload']);
+            $restartOLS->setTimeout(30);
             $restartOLS->run();
 
             sleep(2);

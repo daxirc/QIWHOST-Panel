@@ -236,6 +236,7 @@ www-data ALL=(ALL) NOPASSWD: /usr/sbin/service
 www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl
 www-data ALL=(ALL) NOPASSWD: /usr/local/lsws/bin/lswsctrl
 www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wp
+www-data ALL=(ALL) NOPASSWD: /snap/bin/certbot
 www-data ALL=(ALL) NOPASSWD: /usr/bin/certbot
 SUDOEOF
 chmod 440 /etc/sudoers.d/qiwhost-www-data
@@ -478,6 +479,13 @@ run_cmd "curl -O https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/w
 run_cmd "chmod +x wp-cli.phar && mv wp-cli.phar /usr/local/bin/wp" "Moving WP-CLI to /usr/local/bin/wp"
 
 # ==============================================================================
+# STEP 12b: Install Certbot (Let's Encrypt)
+# ==============================================================================
+step_header "Certbot (Let's Encrypt) Installation"
+run_cmd "snap install certbot --classic" "Installing Certbot (Let's Encrypt)"
+run_cmd "ln -sf /snap/bin/certbot /usr/bin/certbot 2>/dev/null || true" "Linking certbot"
+
+# ==============================================================================
 # STEP 13: Install ClamAV
 # ==============================================================================
 step_header "ClamAV Security Services Installation"
@@ -601,6 +609,7 @@ rm -f /tmp/settings.sql
 step_header "Next.js Frontend Compilations"
 SERVER_IP=$(hostname -I | awk '{print $1}')
 run_cmd "echo 'NEXT_PUBLIC_API_URL=http://$SERVER_IP:8080/api' > /opt/qiwhost/panel-frontend/.env.local" "Setting Next.js local environment variables"
+run_cmd "echo 'NEXT_PUBLIC_SERVER_IP=$SERVER_IP' >> /opt/qiwhost/panel-frontend/.env.local" "Adding server IP environment variable"
 run_cmd "cd /opt/qiwhost/panel-frontend && npm install --production=false" "Installing Next.js frontend node packages"
 run_cmd "cd /opt/qiwhost/panel-frontend && npm run build" "Building Next.js optimized production package"
 run_cmd "npm install -g serve" "Installing serve package globally"

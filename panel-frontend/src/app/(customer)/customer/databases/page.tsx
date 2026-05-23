@@ -101,7 +101,8 @@ export default function CustomerDatabases() {
     },
     onSuccess: (data) => {
       if (data?.sso_url) {
-        window.open(data.sso_url, "_blank");
+        const serverIp = process.env.NEXT_PUBLIC_SERVER_IP || window.location.hostname;
+        window.open(`http://${serverIp}${data.sso_url}`, "_blank");
       }
     },
     onError: (err: any) => {

@@ -74,17 +74,17 @@ class HostingAccountController extends Controller
                 $mkdir = new Process(['sudo', 'mkdir', '-p', "/home/{$validated['system_username']}/public_html"]);
                 $mkdir->run();
                 
-                $chown = new Process(['sudo', 'chown', '-R', "{$validated['system_username']}:www-data", "/home/{$validated['system_username']}/public_html"]);
-                $chown->run();
-
-                $chmodPublicHtml = new Process(['sudo', 'chmod', '775', "/home/{$validated['system_username']}/public_html"]);
-                $chmodPublicHtml->run();
-
-                $chmodHome = new Process(['sudo', 'chmod', '750', "/home/{$validated['system_username']}"]);
-                $chmodHome->run();
-
-                $usermod = new Process(['sudo', 'usermod', '-aG', $validated['system_username'], 'www-data']);
-                $usermod->run();
+                // Set proper permissions so www-data can write
+                $commands = [
+                    ['sudo', 'chown', '-R', "{$validated['system_username']}:www-data", "/home/{$validated['system_username']}/public_html"],
+                    ['sudo', 'chmod', '755', "/home/{$validated['system_username']}"],
+                    ['sudo', 'chmod', '775', "/home/{$validated['system_username']}/public_html"],
+                    ['sudo', 'usermod', '-aG', $validated['system_username'], 'www-data'],
+                ];
+                foreach ($commands as $cmd) {
+                    $process = new Process($cmd);
+                    $process->run();
+                }
 
                 // Set disk quota using setquota
                 try {
@@ -136,7 +136,7 @@ class HostingAccountController extends Controller
                                 "  indexFiles              index.php, index.html\n" .
                                 "}\n\n" .
                                 "scripthandler  {\n" .
-                                "  add                     lsapi:lsphp83 php\n" .
+                                "  add                     lsapi:lsphp php\n" .
                                 "}\n\n" .
                                 "rewrite  {\n" .
                                 "  enable                  1\n" .
@@ -166,35 +166,33 @@ class HostingAccountController extends Controller
                 $mvVhost = new Process(['sudo', 'mv', $vhostPath, "/usr/local/lsws/conf/vhosts/{$validated['domain']}/vhconf.conf"]);
                 $mvVhost->run();
 
-                // Append virtual host declaration to httpd_config.conf securely
-                $vhostRegister = "\nvirtualhost {$validated['domain']} {\n" .
-                                 "  vhRoot                  /home/{$validated['system_username']}/\n" .
-                                 "  configFile              conf/vhosts/{$validated['domain']}/vhconf.conf\n" .
-                                 "  allowSymbolLink         1\n" .
-                                 "  enableScript            1\n" .
-                                 "  restrained              1\n" .
-                                 "}\n";
+                // Register virtualhost block in httpd_config.conf securely
+                $domain = $validated['domain'];
+                $username = $validated['system_username'];
+                $configFile = '/usr/local/lsws/conf/httpd_config.conf';
+                
+                try {
+                    $vhostBlock = "\nvirtualhost {$domain} {\n  vhRoot                  /home/{$username}/\n  configFile              conf/vhosts/{$domain}/vhconf.conf\n  allowSymbolLink         1\n  enableScript            1\n  restrained              0\n  setUIDMode              0\n}\n";
 
-                $appendProc = new Process(['sudo', 'tee', '-a', '/usr/local/lsws/conf/httpd_config.conf']);
-                $appendProc->setInput($vhostRegister);
-                $appendProc->run();
+                    $currentConfig = file_get_contents($configFile);
+                    if (strpos($currentConfig, "virtualhost {$domain}") === false) {
+                        $tempConfigFile = "/tmp/httpd_config_vhost_" . uniqid();
+                        file_put_contents($tempConfigFile, $currentConfig . $vhostBlock);
+                        $mvProc = new Process(['sudo', 'mv', $tempConfigFile, $configFile]);
+                        $mvProc->run();
+                    }
 
-                // Add to listener Default in httpd_config.conf
-                $domainName = $validated['domain'];
-                $process = new Process(['sudo', 'sed', '-i',
-                    "/listener Default{/a\\    map                      {$domainName} {$domainName}",
-                    '/usr/local/lsws/conf/httpd_config.conf'
-                ]);
-                $process->run();
+                    // Add listener map
+                    $process = new Process(['sudo', 'sed', '-i',
+                        "/listener Default{/a\\    map                      {$domain} {$domain}",
+                        $configFile
+                    ]);
+                    $process->run();
 
-                // Reload OpenLiteSpeed gracefully to activate changes
-                $pid = @file_get_contents('/usr/local/lsws/logs/lshttpd.pid');
-                if ($pid) {
-                    $reloadLSWS = new Process(['sudo', 'kill', '-USR1', trim($pid)]);
-                } else {
-                    $reloadLSWS = new Process(['sudo', 'service', 'lsws', 'restart']);
-                }
-                $reloadLSWS->run();
+                    // Graceful OLS reload
+                    $process = new Process(['sudo', '/usr/local/lsws/bin/lswsctrl', 'reload']);
+                    $process->run();
+                } catch (\Exception $e) {}
 
             } catch (\Exception $e) {
                 // Sandbox/WSL dev environment fallback
