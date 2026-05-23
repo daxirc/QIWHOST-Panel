@@ -574,7 +574,7 @@ run_cmd "ADMIN_EMAIL=\"$ADMIN_EMAIL\" ADMIN_PASSWORD=\"$ADMIN_PASSWORD\" php8.3 
 rm -f /opt/qiwhost/panel-api/create_admin.php
 
 # FIX 1 - Seed Hostname & Cluster System settings (`group` column renamed from `group_name`)
-run_cmd "mysql -u qiwpanel -p\"$PANEL_DB_PASS\" qiwpanel -e \"
+cat > /tmp/settings.sql << EOF
 INSERT INTO settings (\`group\`, \`key\`, value, created_at, updated_at) VALUES
 ('hostname', 'server_hostname', '$SERVER_HOSTNAME', NOW(), NOW()),
 ('hostname', 'server_node_name', 'node1', NOW(), NOW()),
@@ -583,7 +583,10 @@ INSERT INTO settings (\`group\`, \`key\`, value, created_at, updated_at) VALUES
 ('general', 'panel_name', 'QIWHOST Panel', NOW(), NOW()),
 ('general', 'admin_email', '$ADMIN_EMAIL', NOW(), NOW())
 ON DUPLICATE KEY UPDATE value=VALUES(value);
-\"" "Configuring hostname and general settings in MySQL"
+EOF
+run_cmd "mysql -u qiwpanel -p\"$PANEL_DB_PASS\" qiwpanel < /tmp/settings.sql" "Configuring hostname and general settings in MySQL"
+rm -f /tmp/settings.sql
+
 
 # ==============================================================================
 # STEP 16: Build Next.js Frontend
