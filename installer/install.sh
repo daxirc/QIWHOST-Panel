@@ -200,8 +200,15 @@ run_cmd "apt-get install -y openlitespeed" "Installing OpenLiteSpeed Web Server"
 run_cmd "apt-get install -y lsphp81 lsphp81-common lsphp81-mysql lsphp81-curl lsphp81-intl lsphp81-opcache lsphp81-redis lsphp81-sqlite3" "Installing LSPHP 8.1"
 run_cmd "apt-get install -y lsphp82 lsphp82-common lsphp82-mysql lsphp82-curl lsphp82-intl lsphp82-opcache lsphp82-redis lsphp82-sqlite3" "Installing LSPHP 8.2"
 run_cmd "apt-get install -y lsphp83 lsphp83-common lsphp83-mysql lsphp83-curl lsphp83-intl lsphp83-opcache lsphp83-redis lsphp83-sqlite3" "Installing LSPHP 8.3"
-run_cmd "systemctl enable lsws" "Enabling OpenLiteSpeed service"
-run_cmd "systemctl start lsws" "Starting OpenLiteSpeed service"
+
+# Determine OpenLiteSpeed service name (openlitespeed or lsws)
+OLS_SERVICE="lsws"
+if systemctl list-unit-files | grep -q openlitespeed.service; then
+    OLS_SERVICE="openlitespeed"
+fi
+
+run_cmd "systemctl enable $OLS_SERVICE" "Enabling OpenLiteSpeed service"
+run_cmd "systemctl start $OLS_SERVICE" "Starting OpenLiteSpeed service"
 
 # Disable Apache if installed
 run_cmd "systemctl stop apache2 2>/dev/null || true" "Stopping Apache if running"
@@ -209,7 +216,7 @@ run_cmd "systemctl disable apache2 2>/dev/null || true" "Disabling Apache"
 
 # Change OLS default port from 8088 to 80
 run_cmd "sed -i 's/address.*\*:8088/address                  *:80/' /usr/local/lsws/conf/httpd_config.conf" "Configuring OLS on port 80"
-run_cmd "systemctl restart lsws" "Restarting OLS on port 80"
+run_cmd "systemctl restart $OLS_SERVICE" "Restarting OLS on port 80"
 
 # Setup www-data sudo permissions for hosting provisioning
 cat > /etc/sudoers.d/qiwhost-www-data << 'SUDOEOF'
@@ -230,7 +237,7 @@ chmod 440 /etc/sudoers.d/qiwhost-www-data
 run_cmd "visudo -c" "Validating sudoers syntax"
 
 # Verify OpenLiteSpeed is active
-systemctl is-active --quiet lsws || { log_error "OpenLiteSpeed failed to start."; exit 1; }
+systemctl is-active --quiet $OLS_SERVICE || { log_error "OpenLiteSpeed failed to start."; exit 1; }
 log_success "OpenLiteSpeed is up and running."
 
 # ==============================================================================
@@ -453,7 +460,7 @@ run_cmd "echo -e \"\$pmaRegister\" >> /usr/local/lsws/conf/httpd_config.conf" "R
 run_cmd "sed -i '/listener Default{/a\\    map                      phpmyadmin phpmyadmin' /usr/local/lsws/conf/httpd_config.conf" "Mapping phpMyAdmin in Default listener"
 
 # Restart OpenLiteSpeed Server to load Virtual Hosts configurations
-run_cmd "systemctl restart lsws" "Restarting OpenLiteSpeed Server"
+run_cmd "systemctl restart $OLS_SERVICE" "Restarting OpenLiteSpeed Server"
 
 # ==============================================================================
 # STEP 12: Install WP-CLI
@@ -740,8 +747,14 @@ check_service() {
     fi
 }
 
+# Dynamic OpenLiteSpeed check in diagnostics
+OLS_SERVICE="lsws"
+if systemctl list-unit-files | grep -q openlitespeed.service; then
+    OLS_SERVICE="openlitespeed"
+fi
+
 echo -e "\nPerforming service status telemetry check...\n"
-check_service lsws
+check_service "$OLS_SERVICE"
 check_service mysql
 check_service redis-server
 check_service postfix
