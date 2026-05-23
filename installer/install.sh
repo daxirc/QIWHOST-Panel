@@ -339,7 +339,7 @@ run_cmd "chown -R opendkim:opendkim /etc/opendkim/keys" "Setting OpenDKIM keys o
 
 # Install SpamAssassin
 run_cmd "apt-get install -y spamassassin spamc" "Installing SpamAssassin"
-run_cmd "systemctl enable spamassassin && systemctl start spamassassin" "Enabling and starting SpamAssassin"
+run_cmd "systemctl enable spamd && systemctl start spamd" "Enabling and starting SpamAssassin"
 
 # Start mail services
 run_cmd "systemctl enable postfix dovecot opendkim && systemctl restart postfix dovecot opendkim" "Enabling and starting Mail stack services"
