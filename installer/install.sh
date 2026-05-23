@@ -687,7 +687,7 @@ run_cmd "systemctl restart qiwhost-api qiwhost-queue qiwhost-frontend" "Triggeri
 # Cron scheduling setup
 run_cmd "echo '* * * * * www-data cd /opt/qiwhost/panel-api && php8.3 artisan schedule:run >> /dev/null 2>&1' > /etc/cron.d/qiwhost-scheduler" "Adding Laravel cron scheduler task"
 run_cmd "echo '0 3 * * * www-data cd /opt/qiwhost/panel-api && php8.3 artisan security:scan --quarantine >> /var/log/qiwhost_security.log 2>&1' > /etc/cron.d/qiwhost-security" "Adding daily security scanning cronjob"
-run_cmd "echo '0 0 * * * root certbot renew --quiet' > /etc/cron.d/qiwhost-ssl-renewal" "Adding daily SSL renewal cronjob"
+run_cmd "echo '0 0 * * * root /snap/bin/certbot renew --quiet && /usr/local/lsws/bin/lswsctrl reload' > /etc/cron.d/qiwhost-ssl-renewal" "Adding daily SSL renewal cronjob"
 
 # ==============================================================================
 # STEP 18: Configure Firewall (UFW)

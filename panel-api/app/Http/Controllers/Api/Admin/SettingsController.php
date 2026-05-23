@@ -298,4 +298,86 @@ class SettingsController extends Controller
 
         return $this->getServerDefaults();
     }
+
+    /**
+     * Provision SSL for panel hostname
+     */
+    public function provisionHostnameSsl(Request $request)
+    {
+        $request->validate([
+            'hostname' => 'required|string',
+            'email'    => 'required|email',
+        ]);
+
+        $jobId = 'hostname_ssl_' . uniqid();
+
+        \Cache::put($jobId, [
+            'status'  => 'queued',
+            'step'    => 0,
+            'message' => 'SSL provisioning queued...',
+            'error'   => null,
+        ], 600);
+
+        \App\Jobs\ProvisionHostnameSslJob::dispatch(
+            $jobId,
+            $request->hostname,
+            $request->email,
+            8443,
+            8080
+        );
+
+        return response()->json([
+            'success' => true,
+            'data'    => ['job_id' => $jobId],
+            'message' => 'Hostname SSL provisioning started.',
+        ]);
+    }
+
+    /**
+     * Poll hostname SSL job status
+     */
+    public function hostnameSslStatus(Request $request)
+    {
+        $jobId = $request->query('job_id');
+        $status = \Cache::get($jobId);
+
+        if (!$status) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Job not found or expired.',
+            ], 404);
+        }
+
+        // Also return current SSL status from DB
+        $sslStatus = \App\Models\Setting::where('group', 'ssl')
+            ->whereIn('key', ['hostname_ssl_status', 'hostname_ssl_domain', 'hostname_ssl_expires'])
+            ->pluck('value', 'key');
+
+        return response()->json([
+            'success' => true,
+            'data'    => array_merge($status, ['ssl_info' => $sslStatus]),
+        ]);
+    }
+
+    /**
+     * Get current hostname SSL info
+     */
+    public function getHostnameSslInfo()
+    {
+        $sslInfo = \App\Models\Setting::where('group', 'ssl')
+            ->pluck('value', 'key');
+
+        $certPath = '/etc/letsencrypt/live/' . ($sslInfo['hostname_ssl_domain'] ?? '') . '/fullchain.pem';
+        $certExists = file_exists($certPath);
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'status'     => $sslInfo['hostname_ssl_status'] ?? 'not_configured',
+                'domain'     => $sslInfo['hostname_ssl_domain'] ?? null,
+                'expires_at' => $sslInfo['hostname_ssl_expires'] ?? null,
+                'cert_exists'=> $certExists,
+            ],
+        ]);
+    }
 }

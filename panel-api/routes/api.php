@@ -83,6 +83,11 @@ Route::middleware('auth.admin')->prefix('admin')->group(function () {
     Route::get('/settings/{group}', [AdminSettingsController::class, 'getSettings']);
     Route::post('/settings/{group}', [AdminSettingsController::class, 'saveSettings']);
 
+    // Hostname SSL
+    Route::post('/settings/hostname-ssl/provision', [AdminSettingsController::class, 'provisionHostnameSsl']);
+    Route::get('/settings/hostname-ssl/status', [AdminSettingsController::class, 'hostnameSslStatus']);
+    Route::get('/settings/hostname-ssl/info', [AdminSettingsController::class, 'getHostnameSslInfo']);
+
     // Email System Routes
     Route::get('/email-system/domains', [AdminEmailSystemController::class, 'getDomains']);
     Route::post('/email-system/configure/{domain}', [AdminEmailSystemController::class, 'configureDomain']);

@@ -27,6 +27,16 @@ export default function AdminSettings() {
   const [errorMsg, setErrorMsg] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Hostname SSL States
+  const [sslInfo, setSslInfo] = useState<any>(null);
+  const [sslJobId, setSslJobId] = useState<string | null>(null);
+  const [sslStep, setSslStep] = useState(0);
+  const [sslStepStatuses, setSslStepStatuses] = useState(['idle','idle','idle','idle']);
+  const [sslProvisioning, setSslProvisioning] = useState(false);
+  const [sslError, setSslError] = useState<string | null>(null);
+  const [sslSuccess, setSslSuccess] = useState(false);
+  const [showSslModal, setShowSslModal] = useState(false);
+
   // General settings
   const [panelName, setPanelName] = useState("");
   const [panelLogoUrl, setPanelLogoUrl] = useState("");
@@ -190,6 +200,93 @@ export default function AdminSettings() {
       fetchSettings(activeTab);
     }
   }, [activeTab]);
+
+  // Fetch current SSL info on load
+  useEffect(() => {
+    API.get('/admin/settings/hostname-ssl/info').then(res => {
+      if (res.data.success) setSslInfo(res.data.data);
+    }).catch(err => console.error(err));
+
+    API.get('/admin/settings/hostname').then(res => {
+      if (res.data.success) setServerHostname(res.data.data.server_hostname || "");
+    }).catch(err => console.error(err));
+  }, []);
+
+  // Poll SSL job status
+  useEffect(() => {
+    if (!sslJobId) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await API.get(`/admin/settings/hostname-ssl/status?job_id=${sslJobId}`);
+        const data = res.data.data;
+
+        setSslStep(data.step);
+
+        const newStatuses = ['idle','idle','idle','idle'];
+        for (let i = 0; i < 4; i++) {
+          if (i + 1 < data.step) newStatuses[i] = 'done';
+          else if (i + 1 === data.step) newStatuses[i] = data.status === 'failed' ? 'failed' : 'processing';
+          else newStatuses[i] = 'idle';
+        }
+        setSslStepStatuses(newStatuses);
+
+        if (data.status === 'complete') {
+          setSslSuccess(true);
+          setSslProvisioning(false);
+          setSslJobId(null);
+          clearInterval(interval);
+          
+          // Refresh SSL info
+          const infoRes = await API.get('/admin/settings/hostname-ssl/info');
+          if (infoRes.data.success) setSslInfo(infoRes.data.data);
+        }
+
+        if (data.status === 'failed') {
+          setSslError(data.error);
+          setSslProvisioning(false);
+          setSslJobId(null);
+          clearInterval(interval);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [sslJobId]);
+
+  const handleProvisionHostnameSsl = async () => {
+    setSslProvisioning(true);
+    setSslError(null);
+    setSslSuccess(false);
+    setSslStepStatuses(['processing','idle','idle','idle']);
+
+    try {
+      const hostnameRes = await API.get('/admin/settings/hostname');
+      const hostname = hostnameRes.data.data.server_hostname;
+      
+      const sslSettingsRes = await API.get('/admin/settings/ssl');
+      const email = sslSettingsRes.data.data.letsencrypt_email || 'admin@qiwhost.com';
+
+      if (!hostname) {
+        throw new Error("Server hostname is not configured yet. Please configure it in the Hostname & Network tab.");
+      }
+
+      const res = await API.post('/admin/settings/hostname-ssl/provision', {
+        hostname,
+        email,
+      });
+
+      if (res.data.success) {
+        setSslJobId(res.data.data.job_id);
+      } else {
+        setSslError(res.data.message);
+        setSslProvisioning(false);
+      }
+    } catch (err: any) {
+      setSslError(err.response?.data?.message || err.message || 'Failed to start SSL provisioning');
+      setSslProvisioning(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1066,6 +1163,171 @@ export default function AdminSettings() {
                   </label>
                 </div>
               </div>
+
+              <hr className="border-gray-150 my-6" />
+
+              {/* Hostname SSL Section */}
+              <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                      <ShieldCheck className="w-5 h-5 text-primary" />
+                      Panel Hostname Let's Encrypt SSL
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Provision and apply a Let's Encrypt certificate directly on your server hostname for HTTPS management.
+                    </p>
+                  </div>
+                  {/* Current SSL Status Badge */}
+                  {sslInfo?.status === 'active' ? (
+                    <span className="px-2.5 py-1 bg-green-50 text-green-600 border border-green-200 rounded-full text-xs font-bold shadow-sm flex items-center gap-1">
+                      <span className="w-2 h-2 bg-green-500 rounded-full animate-ping"></span>
+                      <span>Secure & Active</span>
+                    </span>
+                  ) : (
+                    <span className="px-2.5 py-1 bg-red-50 text-red-655 border border-red-200 rounded-full text-xs font-bold">
+                      Not Configured
+                    </span>
+                  )}
+                </div>
+
+                {/* SSL Info if active */}
+                {sslInfo?.status === 'active' && (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 p-4 bg-green-50/50 border border-green-100 rounded-xl">
+                    <div>
+                      <div className="text-[10px] uppercase font-bold text-gray-400">Secure Domain</div>
+                      <div className="font-mono text-xs font-bold text-gray-800 mt-0.5">{sslInfo.domain}</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] uppercase font-bold text-gray-400">Expiration Date</div>
+                      <div className="text-xs font-bold text-gray-700 mt-0.5">{sslInfo.expires_at}</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] uppercase font-bold text-gray-400">Auto Renewal Status</div>
+                      <div className="text-xs font-bold text-green-600 mt-0.5 flex items-center gap-1">
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Enabled & Scheduled</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Hostname display */}
+                <div className="mb-4 p-3.5 bg-gray-50/80 border border-gray-150 rounded-xl flex items-center gap-3">
+                  <span className="text-gray-500 text-xs font-bold uppercase tracking-wider">Active Hostname:</span>
+                  <span className="font-mono text-sm font-bold text-gray-800 bg-white border border-gray-200 px-2 py-0.5 rounded shadow-sm">
+                    {serverHostname || 'Not configured yet'}
+                  </span>
+                </div>
+
+                {/* Important Note */}
+                <div className="mb-6 p-4 bg-amber-50/70 border border-amber-100 rounded-xl text-xs text-amber-800 leading-relaxed font-semibold">
+                  ⚠️ <strong className="text-amber-900 font-bold">Important:</strong> Before starting the SSL request, ensure your domain DNS glue records successfully point <code>{serverHostname || '(your hostname)'}</code> to this server IP address. Note that OLS services will reload briefly to apply the cert (~30 seconds).
+                </div>
+
+                {/* Provision Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowSslModal(true)}
+                  disabled={sslProvisioning}
+                  className="w-full bg-primary hover:bg-primary-hover disabled:bg-primary/50 text-white font-bold py-3 px-6 rounded-xl shadow-md transition cursor-pointer text-sm flex items-center justify-center gap-2"
+                >
+                  {sslInfo?.status === 'active'
+                    ? '🔄 Renew / Reinstall Let\'s Encrypt SSL'
+                    : '🔒 Provision Let\'s Encrypt SSL'}
+                </button>
+              </div>
+
+              {/* SSL Provisioning Modal */}
+              {showSslModal && (
+                <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4">
+                  <div className="bg-white border border-gray-200 rounded-2xl p-8 w-full max-w-md shadow-2xl relative animate-in fade-in zoom-in-95 duration-200">
+                    <h3 className="text-lg font-bold text-gray-855 mb-6 flex items-center gap-2">
+                      <ShieldCheck className="w-5 h-5 text-primary animate-pulse" />
+                      Hostname SSL Installer
+                    </h3>
+
+                    {/* Steps */}
+                    {[
+                      'Verifying hostname DNS settings',
+                      'Requesting Let\'s Encrypt certificate',
+                      'Configuring OpenLiteSpeed secure listener',
+                      'Updating panel configurations to HTTPS',
+                    ].map((label, i) => (
+                      <div key={i} className="flex items-center gap-4 mb-4">
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border transition-all
+                          ${sslStepStatuses[i] === 'done' ? 'bg-green-50 border-green-200 text-green-600 font-bold' :
+                            sslStepStatuses[i] === 'processing' ? 'bg-indigo-50 border-indigo-200 text-indigo-600 font-bold animate-pulse' :
+                            sslStepStatuses[i] === 'failed' ? 'bg-red-50 border-red-200 text-red-650 font-bold' :
+                            'bg-gray-50 border-gray-150 text-gray-400'}`}>
+                          {i + 1}
+                        </div>
+                        <span className={`text-xs font-semibold transition-colors
+                          ${sslStepStatuses[i] === 'done' ? 'text-green-600 font-bold' :
+                            sslStepStatuses[i] === 'processing' ? 'text-indigo-600 font-extrabold' :
+                            sslStepStatuses[i] === 'failed' ? 'text-red-650 font-bold' :
+                            'text-gray-400'}`}>
+                          {label}
+                        </span>
+                        <div className="ml-auto text-sm">
+                          {sslStepStatuses[i] === 'done' && <span>✅</span>}
+                          {sslStepStatuses[i] === 'processing' && <span className="animate-spin inline-block">⏳</span>}
+                          {sslStepStatuses[i] === 'failed' && <span>❌</span>}
+                        </div>
+                      </div>
+                    ))}
+
+                    {/* Error */}
+                    {sslError && (
+                      <div className="mt-4 p-4 bg-red-50 border border-red-150 rounded-xl animate-in slide-in-from-top-2 duration-300">
+                        <div className="text-red-700 font-bold text-xs mb-1 flex items-center gap-1">
+                          <AlertCircle className="w-3.5 h-3.5" />
+                          <span>SSL Request Failed!</span>
+                        </div>
+                        <div className="text-red-600 text-[10px] font-mono leading-relaxed max-h-32 overflow-y-auto mt-1 p-2 bg-white border border-red-100 rounded-lg">{sslError}</div>
+                      </div>
+                    )}
+
+                    {/* Success */}
+                    {sslSuccess && (
+                      <div className="mt-4 p-5 bg-green-50 border border-green-150 rounded-xl text-center animate-in slide-in-from-top-2 duration-300">
+                        <div className="text-2xl mb-1.5">🎉</div>
+                        <div className="text-green-700 font-bold text-sm">SSL Provisioned Successfully!</div>
+                        <div className="text-green-600 text-xs mt-1 font-semibold leading-relaxed">
+                          Your control panel is now secured with Let's Encrypt SSL and accessible via secure HTTPS protocols.
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Buttons */}
+                    <div className="mt-8 flex gap-3">
+                      {!sslProvisioning && !sslSuccess && (
+                        <button
+                          type="button"
+                          onClick={handleProvisionHostnameSsl}
+                          className="flex-1 bg-primary text-white py-3 rounded-xl font-bold hover:bg-primary-hover shadow-md hover:shadow-lg transition cursor-pointer text-xs"
+                        >
+                          Start Provisioning
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowSslModal(false);
+                          setSslError(null);
+                          setSslSuccess(false);
+                          setSslStepStatuses(['idle','idle','idle','idle']);
+                          setSslProvisioning(false);
+                          setSslJobId(null);
+                        }}
+                        className="flex-1 bg-gray-150 text-gray-700 py-3 rounded-xl font-bold hover:bg-gray-200 transition cursor-pointer text-xs"
+                      >
+                        {sslSuccess ? 'Close' : 'Cancel'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
