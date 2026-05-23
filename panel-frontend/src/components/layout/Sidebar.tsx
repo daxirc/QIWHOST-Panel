@@ -172,7 +172,7 @@ export default function Sidebar({ role }: SidebarProps) {
 
       {/* Sidebar Footer */}
       <div className="p-4 border-t border-gray-800 bg-black/10 flex items-center justify-between text-xs text-gray-500">
-        <span>v1.0.0</span>
+        <span>{role === "admin" ? "v1.0.0" : ""}</span>
         <span className="capitalize">{role} Portal</span>
       </div>
     </aside>
