@@ -201,10 +201,14 @@ run_cmd "apt-get install -y lsphp81 lsphp81-common lsphp81-mysql lsphp81-curl ls
 run_cmd "apt-get install -y lsphp82 lsphp82-common lsphp82-mysql lsphp82-curl lsphp82-intl lsphp82-opcache lsphp82-redis lsphp82-sqlite3" "Installing LSPHP 8.2"
 run_cmd "apt-get install -y lsphp83 lsphp83-common lsphp83-mysql lsphp83-curl lsphp83-intl lsphp83-opcache lsphp83-redis lsphp83-sqlite3" "Installing LSPHP 8.3"
 
-# Determine OpenLiteSpeed service name (openlitespeed or lsws)
-OLS_SERVICE="lsws"
-if systemctl list-unit-files | grep -q openlitespeed.service; then
-    OLS_SERVICE="openlitespeed"
+# Determine OpenLiteSpeed service name (lshttpd, openlitespeed, or lsws)
+OLS_SERVICE="lshttpd"
+if ! systemctl list-unit-files | grep -q lshttpd.service; then
+    if systemctl list-unit-files | grep -q openlitespeed.service; then
+        OLS_SERVICE="openlitespeed"
+    else
+        OLS_SERVICE="lsws"
+    fi
 fi
 
 run_cmd "systemctl enable $OLS_SERVICE" "Enabling OpenLiteSpeed service"
@@ -748,9 +752,13 @@ check_service() {
 }
 
 # Dynamic OpenLiteSpeed check in diagnostics
-OLS_SERVICE="lsws"
-if systemctl list-unit-files | grep -q openlitespeed.service; then
-    OLS_SERVICE="openlitespeed"
+OLS_SERVICE="lshttpd"
+if ! systemctl list-unit-files | grep -q lshttpd.service; then
+    if systemctl list-unit-files | grep -q openlitespeed.service; then
+        OLS_SERVICE="openlitespeed"
+    else
+        OLS_SERVICE="lsws"
+    fi
 fi
 
 echo -e "\nPerforming service status telemetry check...\n"
