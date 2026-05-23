@@ -54,9 +54,11 @@ class EmailController extends Controller
                 'password' => 'required|string|min:6',
                 'name' => 'nullable|string|max:255',
                 'quota' => 'nullable|integer|min:0',
+                'domain_id' => 'required|exists:domains,id',
             ]);
 
-            $domain = $account->domain;
+            $domainModel = $account->domains()->findOrFail($validated['domain_id']);
+            $domain = $domainModel->domain;
             $emailAddress = $validated['local_part'] . '@' . $domain;
 
             // Check if exists

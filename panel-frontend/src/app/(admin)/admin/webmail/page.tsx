@@ -167,7 +167,7 @@ export default function AdminWebmail() {
         </div>
         {statusRes?.installed && (
           <a
-            href={statusRes.url || "/webmail"}
+            href={statusRes.url || (typeof window !== "undefined" ? "http://" + window.location.hostname + "/webmail" : "#")}
             target="_blank"
             rel="noopener noreferrer"
             className="bg-primary hover:bg-primary-hover text-white px-4 py-2.5 rounded-lg font-semibold shadow-md flex items-center justify-center gap-2 transition-all text-sm"

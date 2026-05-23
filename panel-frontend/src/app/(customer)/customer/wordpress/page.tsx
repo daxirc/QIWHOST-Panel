@@ -39,12 +39,29 @@ export default function CustomerWordPress() {
   const [adminPassword, setAdminPassword] = useState("");
   const [autoUpdate, setAutoUpdate] = useState(true);
 
+  // WP Database & Directory Inputs
+  const [dbSuffix, setDbSuffix] = useState("");
+  const [dbUserSuffix, setDbUserSuffix] = useState("");
+  const [dbPassword, setDbPassword] = useState("");
+  const [directory, setDirectory] = useState("");
+
   // Password Change Drawer State
   const [selectedWpForPass, setSelectedWpForPass] = useState<any>(null);
   const [newAdminPassword, setNewAdminPassword] = useState("");
 
   // Plugins Manager State
   const [selectedWpForPlugins, setSelectedWpForPlugins] = useState<any>(null);
+
+  // Fetch customer dashboard metrics to resolve dynamic system_username prefix
+  const { data: customerData } = useQuery({
+    queryKey: ["customer", "dashboard"],
+    queryFn: async () => {
+      const response = await API.get("/customer/dashboard");
+      return response.data.data;
+    },
+  });
+
+  const systemUsername = customerData?.account?.username || "user";
 
   // Fetch client WordPress sites
   const { data: installationsRes, isLoading: isWpLoading } = useQuery({
@@ -100,6 +117,10 @@ export default function CustomerWordPress() {
       setAdminUser("");
       setAdminEmail("");
       setAdminPassword("");
+      setDbSuffix("");
+      setDbUserSuffix("");
+      setDbPassword("");
+      setDirectory("");
       showToast("success", "WordPress site successfully auto-provisioned!");
     },
     onError: (err: any) => {
@@ -200,7 +221,7 @@ export default function CustomerWordPress() {
 
   const handleInstallSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedDomainId || !siteTitle || !adminUser || !adminEmail || !adminPassword) {
+    if (!selectedDomainId || !siteTitle || !adminUser || !adminEmail || !adminPassword || !dbSuffix || !dbUserSuffix || !dbPassword) {
       showToast("error", "Please fill in all installer fields.");
       return;
     }
@@ -210,7 +231,11 @@ export default function CustomerWordPress() {
       admin_user: adminUser,
       admin_email: adminEmail,
       admin_password: adminPassword,
-      auto_update: autoUpdate
+      auto_update: autoUpdate,
+      db_suffix: dbSuffix,
+      db_user_suffix: dbUserSuffix,
+      db_password: dbPassword,
+      directory: directory
     });
   };
 
@@ -476,7 +501,69 @@ export default function CustomerWordPress() {
                   placeholder="Enter complex password"
                   value={adminPassword}
                   onChange={(e) => setAdminPassword(e.target.value)}
-                  className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-gray-800 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  className="w-full bg-gray-55 border border-gray-200 rounded-lg px-3 py-2 text-gray-800 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-gray-450 block uppercase">Installation Directory</label>
+                <div className="flex items-center">
+                  <span className="bg-gray-100 border border-r-0 border-gray-200 text-gray-500 px-3 py-2 text-sm rounded-l-lg font-mono font-bold">
+                    /
+                  </span>
+                  <input
+                    type="text"
+                    placeholder="e.g. blog (or leave empty for root)"
+                    value={directory}
+                    onChange={(e) => setDirectory(e.target.value)}
+                    className="w-full bg-gray-55 border border-gray-200 rounded-r-lg px-3 py-2 text-gray-850 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-gray-450 block uppercase">Database Name (Suffix)</label>
+                <div className="flex items-center">
+                  <span className="bg-gray-100 border border-r-0 border-gray-200 text-gray-500 px-3 py-2 text-sm rounded-l-lg font-mono font-bold">
+                    {systemUsername}_
+                  </span>
+                  <input
+                    type="text"
+                    placeholder="e.g. wpdb"
+                    value={dbSuffix}
+                    onChange={(e) => setDbSuffix(e.target.value)}
+                    className="w-full bg-gray-55 border border-gray-200 rounded-r-lg px-3 py-2 text-gray-850 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-gray-450 block uppercase">Database User (Suffix)</label>
+                <div className="flex items-center">
+                  <span className="bg-gray-100 border border-r-0 border-gray-200 text-gray-500 px-3 py-2 text-sm rounded-l-lg font-mono font-bold">
+                    {systemUsername}_
+                  </span>
+                  <input
+                    type="text"
+                    placeholder="e.g. wpusr"
+                    value={dbUserSuffix}
+                    onChange={(e) => setDbUserSuffix(e.target.value)}
+                    className="w-full bg-gray-55 border border-gray-200 rounded-r-lg px-3 py-2 text-gray-850 focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-gray-455 block uppercase">Database Password</label>
+                <input
+                  type="password"
+                  placeholder="Enter database password"
+                  value={dbPassword}
+                  onChange={(e) => setDbPassword(e.target.value)}
+                  className="w-full bg-gray-55 border border-gray-200 rounded-lg px-3 py-2 text-gray-800 focus:outline-none focus:ring-2 focus:ring-primary/20"
                   required
                 />
               </div>

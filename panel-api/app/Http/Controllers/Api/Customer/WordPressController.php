@@ -54,62 +54,103 @@ class WordPressController extends Controller
                 'admin_email' => 'required|email',
                 'admin_password' => 'required|string|min:6',
                 'auto_update' => 'nullable|boolean',
+                'db_suffix' => 'required|string|alpha_dash|max:64',
+                'db_user_suffix' => 'required|string|alpha_dash|max:64',
+                'db_password' => 'required|string|min:6',
+                'directory' => 'nullable|string',
             ]);
 
-            // Auto-create database & user
-            $dbName = 'wp_' . rand(100, 999);
-            $dbUser = 'wpu_' . rand(100, 999);
-            $dbPass = bin2hex(random_bytes(6));
-
+            // Database Suffix Prefixing
             $prefix = $account->system_username . '_';
-            $fullDbName = $prefix . $dbName;
-            $fullDbUser = $prefix . $dbUser;
+            $fullDbName = $prefix . $validated['db_suffix'];
+            $fullDbUser = $prefix . $validated['db_user_suffix'];
+            $dbPass = $validated['db_password'];
 
-            // MySQL DB Creation
+            // MySQL DB Creation using runMysql helper
             try {
                 $sql = "CREATE DATABASE IF NOT EXISTS `{$fullDbName}`; " .
                        "CREATE USER IF NOT EXISTS '{$fullDbUser}'@'localhost' IDENTIFIED BY '{$dbPass}'; " .
                        "GRANT ALL PRIVILEGES ON `{$fullDbName}`.* TO '{$fullDbUser}'@'localhost'; " .
                        "FLUSH PRIVILEGES;";
-                $proc = new Process(['mysql', '-u', 'root', '-e', $sql]);
-                $proc->run();
+                $this->runMysql($sql);
             } catch (\Exception $e) {}
 
-            // Save records
-            Database::create([
-                'hosting_account_id' => $account->id,
-                'database_name' => $dbName,
-                'database_name_prefix' => $account->system_username,
-                'connection_host' => 'localhost',
-            ]);
-
-            DatabaseUser::create([
-                'hosting_account_id' => $account->id,
-                'username' => $dbUser,
-                'password_encrypted' => Hash::make($dbPass),
-                'host' => 'localhost',
-            ]);
-
-            // Run download & install action
-            $action = new \App\Actions\InstallWordPress();
-            $action->handle(
-                $domain->domain,
-                $domain->domain_root,
-                $fullDbName,
-                $fullDbUser,
-                $dbPass,
-                $validated['admin_email'],
-                $validated['admin_user'],
-                $validated['admin_password'],
-                $validated['site_title']
+            // Save database & user records
+            Database::updateOrCreate(
+                ['database_name' => $validated['db_suffix'], 'database_name_prefix' => $account->system_username],
+                ['hosting_account_id' => $account->id, 'connection_host' => 'localhost']
             );
+
+            DatabaseUser::updateOrCreate(
+                ['username' => $validated['db_user_suffix'], 'hosting_account_id' => $account->id],
+                ['password_encrypted' => Hash::make($dbPass), 'host' => 'localhost']
+            );
+
+            // Determine installation path
+            $installPath = $domain->domain_root;
+            $dir = trim($validated['directory'] ?? '', '/');
+            if ($dir !== '') {
+                $installPath .= '/' . $dir;
+            }
+
+            // Execute WP-CLI installation securely as the system user via sudo -u {username}
+            try {
+                if (!file_exists($installPath)) {
+                    @mkdir($installPath, 0775, true);
+                    $chown = new Process(['sudo', 'chown', "{$account->system_username}:www-data", $installPath]);
+                    $chown->run();
+                }
+
+                // 1. wp core download
+                $dlProc = new Process(['sudo', '-u', $account->system_username, 'wp', 'core', 'download', '--path=' . $installPath]);
+                $dlProc->run();
+
+                // 2. wp config create
+                $cfgProc = new Process(['sudo', '-u', $account->system_username, 'wp', 'config', 'create', 
+                    '--dbname=' . $fullDbName, 
+                    '--dbuser=' . $fullDbUser, 
+                    '--dbpass=' . $dbPass, 
+                    '--path=' . $installPath
+                ]);
+                $cfgProc->run();
+
+                // 3. wp core install
+                $siteUrl = $domain->domain;
+                if ($dir !== '') {
+                    $siteUrl .= '/' . $dir;
+                }
+                $instProc = new Process(['sudo', '-u', $account->system_username, 'wp', 'core', 'install',
+                    '--url=' . $siteUrl,
+                    '--title=' . $validated['site_title'],
+                    '--admin_user=' . $validated['admin_user'],
+                    '--admin_password=' . $validated['admin_password'],
+                    '--admin_email=' . $validated['admin_email'],
+                    '--path=' . $installPath
+                ]);
+                $instProc->run();
+
+                // Fix permissions recursively so OpenLiteSpeed can write cleanly
+                $chownRec = new Process(['sudo', 'chown', '-R', "{$account->system_username}:www-data", $installPath]);
+                $chownRec->run();
+                $chmodRec = new Process(['sudo', 'chmod', '-R', '775', $installPath]);
+                $chmodRec->run();
+
+            } catch (\Exception $e) {
+                // Fallback in case of failure/local dev
+                if (env('APP_ENV') === 'local') {
+                    @mkdir($installPath, 0775, true);
+                    @file_put_contents($installPath . '/index.php', "<?php echo 'WordPress Local Dev Fallback - Success!';");
+                } else {
+                    throw $e;
+                }
+            }
 
             // Store Installation Record
             $wp = WordPressInstallation::create([
                 'hosting_account_id' => $account->id,
                 'domain_id' => $domain->id,
-                'path' => $domain->domain_root,
-                'version' => '6.5',
+                'path' => $installPath,
+                'version' => '6.5.3', 
                 'db_name' => $fullDbName,
                 'db_user' => $fullDbUser,
                 'status' => 'active',
@@ -147,12 +188,7 @@ class WordPressController extends Controller
             $wp = WordPressInstallation::where('hosting_account_id', $account->id)->findOrFail($id);
 
             // Trigger WP-CLI core update
-            $process = new Process([
-                'wp', 'core', 'update',
-                '--path=' . $wp->path,
-                '--allow-root'
-            ]);
-            $process->run();
+            $process = $this->runWpCli($wp, ['core', 'update']);
 
             $wp->update(['version' => '6.5.3']);
 
@@ -168,12 +204,7 @@ class WordPressController extends Controller
             $account = $this->getHostingAccount($request);
             $wp = WordPressInstallation::where('hosting_account_id', $account->id)->findOrFail($id);
 
-            $process = new Process([
-                'wp', 'plugin', 'update', '--all',
-                '--path=' . $wp->path,
-                '--allow-root'
-            ]);
-            $process->run();
+            $process = $this->runWpCli($wp, ['plugin', 'update', '--all']);
 
             return $this->successResponse(null, 'All plugins updated successfully.');
         } catch (\Exception $e) {
@@ -187,12 +218,7 @@ class WordPressController extends Controller
             $account = $this->getHostingAccount($request);
             $wp = WordPressInstallation::where('hosting_account_id', $account->id)->findOrFail($id);
 
-            $process = new Process([
-                'wp', 'theme', 'update', '--all',
-                '--path=' . $wp->path,
-                '--allow-root'
-            ]);
-            $process->run();
+            $process = $this->runWpCli($wp, ['theme', 'update', '--all']);
 
             return $this->successResponse(null, 'All themes updated successfully.');
         } catch (\Exception $e) {
@@ -225,12 +251,7 @@ class WordPressController extends Controller
             $account = $this->getHostingAccount($request);
             $wp = WordPressInstallation::where('hosting_account_id', $account->id)->findOrFail($id);
 
-            $process = new Process([
-                'wp', 'plugin', 'activate', $plugin,
-                '--path=' . $wp->path,
-                '--allow-root'
-            ]);
-            $process->run();
+            $process = $this->runWpCli($wp, ['plugin', 'activate', $plugin]);
 
             return $this->successResponse(null, "Plugin {$plugin} activated successfully.");
         } catch (\Exception $e) {
@@ -244,12 +265,7 @@ class WordPressController extends Controller
             $account = $this->getHostingAccount($request);
             $wp = WordPressInstallation::where('hosting_account_id', $account->id)->findOrFail($id);
 
-            $process = new Process([
-                'wp', 'plugin', 'deactivate', $plugin,
-                '--path=' . $wp->path,
-                '--allow-root'
-            ]);
-            $process->run();
+            $process = $this->runWpCli($wp, ['plugin', 'deactivate', $plugin]);
 
             return $this->successResponse(null, "Plugin {$plugin} deactivated successfully.");
         } catch (\Exception $e) {
@@ -267,13 +283,7 @@ class WordPressController extends Controller
                 'password' => 'required|string|min:6'
             ]);
 
-            $process = new Process([
-                'wp', 'user', 'update', $wp->wp_admin_user,
-                '--user_pass=' . $validated['password'],
-                '--path=' . $wp->path,
-                '--allow-root'
-            ]);
-            $process->run();
+            $process = $this->runWpCli($wp, ['user', 'update', $wp->wp_admin_user, '--user_pass=' . $validated['password']]);
 
             return $this->successResponse(null, 'WordPress admin password changed successfully.');
         } catch (\Exception $e) {
@@ -289,12 +299,8 @@ class WordPressController extends Controller
 
             $nextStatus = $wp->status === 'maintenance' ? 'active' : 'maintenance';
             
-            if ($nextStatus === 'maintenance') {
-                $process = new Process(['wp', 'maintenance-mode', 'activate', '--path=' . $wp->path, '--allow-root']);
-            } else {
-                $process = new Process(['wp', 'maintenance-mode', 'deactivate', '--path=' . $wp->path, '--allow-root']);
-            }
-            $process->run();
+            $action = $nextStatus === 'maintenance' ? 'activate' : 'deactivate';
+            $process = $this->runWpCli($wp, ['maintenance-mode', $action]);
 
             $wp->update(['status' => $nextStatus]);
 
@@ -312,7 +318,7 @@ class WordPressController extends Controller
 
             // Run quick zip dump in background using Symfony Process
             $backupFile = "{$wp->path}/wp-backup-" . date('Ymd') . ".zip";
-            $process = new Process(['zip', '-r', $backupFile, $wp->path]);
+            $process = new Process(['sudo', '-u', $account->system_username, 'zip', '-r', $backupFile, $wp->path]);
             $process->run();
 
             return $this->successResponse(null, 'WordPress backup snapshot created successfully inside your root directory.');
@@ -339,5 +345,30 @@ class WordPressController extends Controller
         } catch (\Exception $e) {
             return $this->errorResponse($e->getMessage());
         }
+    }
+
+    private function runWpCli($wp, array $args)
+    {
+        $account = $wp->hostingAccount;
+        if (!$account) {
+            $account = HostingAccount::find($wp->hosting_account_id);
+        }
+        
+        $cmd = ['sudo', '-u', $account->system_username, 'wp'];
+        $cmd = array_merge($cmd, $args);
+        $cmd[] = '--path=' . $wp->path;
+        
+        $process = new Process($cmd);
+        $process->run();
+        return $process;
+    }
+
+    private function runMysql($sql)
+    {
+        $rootPass = env('DB_ROOT_PASSWORD');
+        $cmd = $rootPass ? ['mysql', '-u', 'root', "-p{$rootPass}", '-e', $sql] : ['mysql', '-u', 'root', '-e', $sql];
+        $process = new Process($cmd);
+        $process->run();
+        return $process;
     }
 }

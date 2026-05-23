@@ -33,6 +33,18 @@ export default function CustomerDomains() {
 
   const domains = Array.isArray(domainsRes) ? domainsRes : [];
 
+  // Fetch customer dashboard metrics to resolve dynamic active nameservers
+  const { data: customerData } = useQuery({
+    queryKey: ["customer", "dashboard"],
+    queryFn: async () => {
+      const response = await API.get("/customer/dashboard");
+      return response.data.data;
+    },
+  });
+
+  const ns1 = customerData?.account?.ns1 || "ns1.node1.qiwhost.com";
+  const ns2 = customerData?.account?.ns2 || "ns2.node1.qiwhost.com";
+
   // Create Domain Mutation
   const createMutation = useMutation({
     mutationFn: async (payload: any) => {
@@ -106,11 +118,11 @@ export default function CustomerDomains() {
         <div className="flex flex-wrap gap-4 text-xs font-mono">
           <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 flex items-center gap-2 shadow-sm font-semibold text-gray-800">
             <span className="text-[10px] text-gray-400 font-bold uppercase">NS1:</span>
-            <span>ns1.node1.qiwhost.com</span>
+            <span>{ns1}</span>
           </div>
           <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 flex items-center gap-2 shadow-sm font-semibold text-gray-800">
             <span className="text-[10px] text-gray-400 font-bold uppercase">NS2:</span>
-            <span>ns2.node1.qiwhost.com</span>
+            <span>{ns2}</span>
           </div>
         </div>
       </div>

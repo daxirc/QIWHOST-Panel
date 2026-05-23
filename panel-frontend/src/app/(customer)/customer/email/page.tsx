@@ -31,6 +31,7 @@ export default function CustomerEmails() {
   const [password, setPassword] = useState("");
   const [quota, setQuota] = useState("1024");
   const [name, setName] = useState("");
+  const [selectedDomainId, setSelectedDomainId] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
 
   // Fetch email accounts
@@ -43,6 +44,17 @@ export default function CustomerEmails() {
   });
 
   const emails = Array.isArray(emailsRes) ? emailsRes : [];
+
+  // Fetch customer domains
+  const { data: domainsRes } = useQuery({
+    queryKey: ["customer", "domains"],
+    queryFn: async () => {
+      const res = await API.get("/customer/domains");
+      return res.data.data;
+    }
+  });
+
+  const domains = Array.isArray(domainsRes) ? domainsRes : [];
 
   // Create Email Mutation
   const createMutation = useMutation({
@@ -57,6 +69,7 @@ export default function CustomerEmails() {
       setPassword("");
       setQuota("1024");
       setName("");
+      setSelectedDomainId("");
       setErrorMsg("");
     },
     onError: (err: any) => {
@@ -94,7 +107,7 @@ export default function CustomerEmails() {
 
   const handleCreateEmail = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!localPart || !password) {
+    if (!localPart || !password || !selectedDomainId) {
       setErrorMsg("Please fill in all required fields.");
       return;
     }
@@ -102,7 +115,8 @@ export default function CustomerEmails() {
       local_part: localPart,
       password: password,
       quota: parseInt(quota),
-      name: name
+      name: name,
+      domain_id: parseInt(selectedDomainId)
     });
   };
 
@@ -273,6 +287,25 @@ export default function CustomerEmails() {
 
               <div className="space-y-1">
                 <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block">
+                  Select Domain
+                </label>
+                <select
+                  value={selectedDomainId}
+                  onChange={(e) => setSelectedDomainId(e.target.value)}
+                  className="w-full bg-gray-50 border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 text-gray-850 font-semibold"
+                  required
+                >
+                  <option value="">-- Choose Domain --</option>
+                  {domains.map((dom: any) => (
+                    <option key={dom.id} value={dom.id}>
+                      {dom.domain}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block">
                   Email Address Prefix
                 </label>
                 <input
@@ -280,9 +313,14 @@ export default function CustomerEmails() {
                   placeholder="e.g. info, sales"
                   value={localPart}
                   onChange={(e) => setLocalPart(e.target.value)}
-                  className="w-full bg-gray-50 border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 text-gray-800"
+                  className="w-full bg-gray-50 border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 text-gray-800 font-semibold"
                   required
                 />
+                {selectedDomainId && (
+                  <p className="text-xs text-primary mt-1 italic font-semibold">
+                    Preview: {localPart || "info"}@{domains.find(d => d.id === parseInt(selectedDomainId))?.domain}
+                  </p>
+                )}
               </div>
 
               <div className="space-y-1">

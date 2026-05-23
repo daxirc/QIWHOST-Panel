@@ -223,7 +223,9 @@ run_cmd "systemctl restart $OLS_SERVICE" "Restarting OLS on port 80"
 cat > /etc/sudoers.d/qiwhost-www-data << 'SUDOEOF'
 www-data ALL=(ALL) NOPASSWD: /usr/sbin/useradd
 www-data ALL=(ALL) NOPASSWD: /usr/sbin/userdel
+www-data ALL=(ALL) NOPASSWD: /usr/sbin/usermod
 www-data ALL=(ALL) NOPASSWD: /usr/bin/chpasswd
+www-data ALL=(ALL) NOPASSWD: /usr/bin/passwd
 www-data ALL=(ALL) NOPASSWD: /bin/mkdir
 www-data ALL=(ALL) NOPASSWD: /bin/chown
 www-data ALL=(ALL) NOPASSWD: /bin/chmod
@@ -233,6 +235,8 @@ www-data ALL=(ALL) NOPASSWD: /bin/rm
 www-data ALL=(ALL) NOPASSWD: /usr/sbin/service
 www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl
 www-data ALL=(ALL) NOPASSWD: /usr/local/lsws/bin/lswsctrl
+www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wp
+www-data ALL=(ALL) NOPASSWD: /usr/bin/certbot
 SUDOEOF
 chmod 440 /etc/sudoers.d/qiwhost-www-data
 run_cmd "visudo -c" "Validating sudoers syntax"
@@ -409,6 +413,9 @@ run_cmd "echo -e \"\$vhostRegister\" >> /usr/local/lsws/conf/httpd_config.conf" 
 
 # Map in Default listener as: map webmail webmail
 run_cmd "sed -i '/listener Default{/a\\    map                      webmail webmail' /usr/local/lsws/conf/httpd_config.conf" "Mapping webmail in Default listener"
+
+# Add global context mapping to default Example vhost
+run_cmd "echo -e '\ncontext /webmail/ {\n  location                /var/lib/roundcube/\n  allowBrowse             1\n}\n\ncontext /phpmyadmin/ {\n  location                /usr/share/phpmyadmin/\n  allowBrowse             1\n}' >> /usr/local/lsws/conf/vhosts/Example/vhconf.conf" "Mapping webmail and phpmyadmin contexts to default OLS Example vhost"
 
 # ==============================================================================
 # STEP 11: Install phpMyAdmin

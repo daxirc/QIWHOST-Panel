@@ -73,6 +73,18 @@ class FileManagerController extends Controller
         return $hostingAccount;
     }
 
+    private function fixPermissions(HostingAccount $account, $filePath)
+    {
+        try {
+            $process = new \Symfony\Component\Process\Process(['sudo', 'chown', "{$account->system_username}:www-data", $filePath]);
+            $process->run();
+            
+            $chmodCmd = is_dir($filePath) ? '775' : '664';
+            $chmodProcess = new \Symfony\Component\Process\Process(['sudo', 'chmod', $chmodCmd, $filePath]);
+            $chmodProcess->run();
+        } catch (\Exception $e) {}
+    }
+
     public function list(Request $request)
     {
         try {
@@ -195,9 +207,11 @@ class FileManagerController extends Controller
             $parentDir = dirname($jailedPath);
             if (!File::exists($parentDir)) {
                 File::makeDirectory($parentDir, 0755, true);
+                $this->fixPermissions($account, $parentDir);
             }
 
             File::put($jailedPath, $content);
+            $this->fixPermissions($account, $jailedPath);
 
             return $this->successResponse(null, 'File written successfully.');
 
@@ -225,13 +239,16 @@ class FileManagerController extends Controller
 
             if ($type === 'directory') {
                 File::makeDirectory($jailedPath, 0755, true);
+                $this->fixPermissions($account, $jailedPath);
             } else {
                 // Ensure parent directory exists
                 $parentDir = dirname($jailedPath);
                 if (!File::exists($parentDir)) {
                     File::makeDirectory($parentDir, 0755, true);
+                    $this->fixPermissions($account, $parentDir);
                 }
                 File::put($jailedPath, '');
+                $this->fixPermissions($account, $jailedPath);
             }
 
             return $this->successResponse(null, ucfirst($type) . ' created successfully.');
@@ -282,9 +299,11 @@ class FileManagerController extends Controller
 
             if (!File::exists($jailedDir)) {
                 File::makeDirectory($jailedDir, 0755, true);
+                $this->fixPermissions($account, $jailedDir);
             }
             
             $file->move($jailedDir, $filename);
+            $this->fixPermissions($account, $jailedDir . '/' . $filename);
 
             return $this->successResponse(null, 'File uploaded successfully.');
 
@@ -363,6 +382,7 @@ class FileManagerController extends Controller
             }
 
             if (rename($oldJailedPath, $newJailedPath)) {
+                $this->fixPermissions($account, $newJailedPath);
                 return $this->successResponse(null, "Item renamed successfully.");
             } else {
                 return $this->errorResponse("Failed to rename item.");
@@ -404,6 +424,7 @@ class FileManagerController extends Controller
             }
 
             if (rename($sourceJailed, $destJailed)) {
+                $this->fixPermissions($account, $destJailed);
                 return $this->successResponse(null, "Item moved successfully.");
             } else {
                 return $this->errorResponse("Failed to move item.");
@@ -446,10 +467,12 @@ class FileManagerController extends Controller
 
             if (File::isDirectory($sourceJailed)) {
                 if (File::copyDirectory($sourceJailed, $destJailed)) {
+                    $this->fixPermissions($account, $destJailed);
                     return $this->successResponse(null, "Folder copied successfully.");
                 }
             } else {
                 if (copy($sourceJailed, $destJailed)) {
+                    $this->fixPermissions($account, $destJailed);
                     return $this->successResponse(null, "File copied successfully.");
                 }
             }
@@ -613,6 +636,11 @@ class FileManagerController extends Controller
 
                 $zip->extractTo($destJailed);
                 $zip->close();
+
+                foreach ($extractedFiles as $file) {
+                    $this->fixPermissions($account, $destJailed . '/' . $file);
+                }
+                $this->fixPermissions($account, $destJailed);
 
                 return $this->successResponse([
                     'extracted' => $extractedFiles

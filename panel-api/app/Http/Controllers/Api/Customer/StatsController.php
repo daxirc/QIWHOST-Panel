@@ -40,8 +40,7 @@ class StatsController extends Controller
                 $dbSizeMb = 0.5; // fallback default
                 try {
                     $sql = "SELECT ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS `size` FROM information_schema.TABLES WHERE table_schema = '{$fullDbName}' GROUP BY table_schema;";
-                    $process = new Process(['mysql', '-u', 'root', '-e', $sql]);
-                    $process->run();
+                    $process = $this->runMysql($sql);
                     if ($process->isSuccessful()) {
                         $out = trim($process->getOutput());
                         $lines = explode("\n", $out);
@@ -128,5 +127,14 @@ class StatsController extends Controller
         } catch (\Exception $e) {
             return $this->errorResponse($e->getMessage());
         }
+    }
+
+    private function runMysql($sql)
+    {
+        $rootPass = env('DB_ROOT_PASSWORD');
+        $cmd = $rootPass ? ['mysql', '-u', 'root', "-p{$rootPass}", '-e', $sql] : ['mysql', '-u', 'root', '-e', $sql];
+        $process = new Process($cmd);
+        $process->run();
+        return $process;
     }
 }

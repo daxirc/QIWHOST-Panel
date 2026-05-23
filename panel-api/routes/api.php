@@ -178,6 +178,9 @@ Route::middleware(['auth:sanctum', 'enforce.limits', 'rate.customer'])->prefix('
     Route::get('/php/version', [CustomerPhpManagerController::class, 'getCurrentVersion']);
 
     // Customer Database SSO, Users, and Remote Access Routes
+    Route::get('/databases', [CustomerDatabaseController::class, 'index']);
+    Route::post('/databases', [CustomerDatabaseController::class, 'store']);
+    Route::delete('/databases/{id}', [CustomerDatabaseController::class, 'destroy']);
     Route::post('/databases/{id}/phpmyadmin-sso', [CustomerDatabaseController::class, 'phpmyadminSso']);
     Route::get('/databases/{id}/users', [CustomerDatabaseController::class, 'getUsers']);
     Route::post('/databases/{id}/users', [CustomerDatabaseController::class, 'addUser']);
@@ -199,6 +202,12 @@ Route::middleware(['auth:sanctum', 'enforce.limits', 'rate.customer'])->prefix('
     Route::post('/wordpress/{id}/maintenance-mode', [CustomerWordPressController::class, 'toggleMaintenanceMode']);
     Route::post('/wordpress/{id}/backup', [CustomerWordPressController::class, 'createBackup']);
     Route::delete('/wordpress/{id}', [CustomerWordPressController::class, 'destroy']);
+
+    // Customer SSL Routes
+    Route::get('/ssl/{domainId}/validate', [CustomerSslController::class, 'validateDomain']);
+    Route::post('/ssl/{domainId}/install', [CustomerSslController::class, 'install']);
+    Route::post('/ssl/{domainId}/provision', [CustomerSslController::class, 'provision']);
+    Route::get('/ssl/poll/{jobId}', [CustomerSslController::class, 'poll']);
 
     Route::get('/domains', [CustomerDomainController::class, 'index']);
     Route::post('/domains', [CustomerDomainController::class, 'store']);

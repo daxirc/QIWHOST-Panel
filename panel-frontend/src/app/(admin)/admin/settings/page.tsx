@@ -210,7 +210,9 @@ export default function AdminSettings() {
       payload = {
         node,
         ns_ip: nsIp,
-        dns_ttl: dnsTtl
+        dns_ttl: dnsTtl,
+        ns1,
+        ns2
       };
     } else if (activeTab === "email") {
       payload = {
@@ -1007,24 +1009,26 @@ export default function AdminSettings() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-gray-400 block">Dynamic Nameserver 1 (Preformatted)</label>
+                  <label className="text-xs font-bold text-gray-500 uppercase block">Nameserver 1</label>
                   <input
                     type="text"
-                    readOnly
-                    disabled
+                    required
                     value={ns1}
-                    className="w-full bg-gray-100 border border-gray-200 rounded-lg px-4 py-2 text-sm text-gray-500 font-mono font-bold"
+                    onChange={(e) => setNs1(e.target.value)}
+                    placeholder="ns1.node.qiwhost.com"
+                    className="w-full bg-gray-55 border border-gray-200 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 text-gray-800 font-semibold"
                   />
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-gray-400 block">Dynamic Nameserver 2 (Preformatted)</label>
+                  <label className="text-xs font-bold text-gray-500 uppercase block">Nameserver 2</label>
                   <input
                     type="text"
-                    readOnly
-                    disabled
+                    required
                     value={ns2}
-                    className="w-full bg-gray-100 border border-gray-200 rounded-lg px-4 py-2 text-sm text-gray-500 font-mono font-bold"
+                    onChange={(e) => setNs2(e.target.value)}
+                    placeholder="ns2.node.qiwhost.com"
+                    className="w-full bg-gray-55 border border-gray-200 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 text-gray-800 font-semibold"
                   />
                 </div>
               </div>

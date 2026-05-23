@@ -101,8 +101,12 @@ class SettingsController extends Controller
         // Customize Nameserver logic if saving NS group
         if ($group === 'nameservers' && isset($input['node'])) {
             $node = preg_replace('/[^a-zA-Z0-9_-]/', '', $input['node']);
-            $input['ns1'] = "ns1.{$node}.qiwhost.com";
-            $input['ns2'] = "ns2.{$node}.qiwhost.com";
+            if (!isset($input['ns1']) || empty($input['ns1'])) {
+                $input['ns1'] = "ns1.{$node}.qiwhost.com";
+            }
+            if (!isset($input['ns2']) || empty($input['ns2'])) {
+                $input['ns2'] = "ns2.{$node}.qiwhost.com";
+            }
         }
 
         foreach ($input as $key => $value) {

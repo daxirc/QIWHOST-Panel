@@ -16,6 +16,9 @@ export default function AdminPackages() {
   const [bandwidth, setBandwidth] = useState("");
   const [databases, setDatabases] = useState("");
   const [emailAccounts, setEmailAccounts] = useState("");
+  const [addonDomains, setAddonDomains] = useState("");
+  const [subdomains, setSubdomains] = useState("");
+  const [ftpAccounts, setFtpAccounts] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
 
   // Fetch packages
@@ -88,12 +91,15 @@ export default function AdminPackages() {
     setBandwidth("");
     setDatabases("");
     setEmailAccounts("");
+    setAddonDomains("");
+    setSubdomains("");
+    setFtpAccounts("");
     setErrorMsg("");
   };
 
   const handleCreatePackage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !diskSpace || !bandwidth || !databases || !emailAccounts) {
+    if (!name || !diskSpace || !bandwidth || !databases || !emailAccounts || !addonDomains || !subdomains || !ftpAccounts) {
       setErrorMsg("All fields are strictly required.");
       return;
     }
@@ -103,9 +109,9 @@ export default function AdminPackages() {
       bandwidth: parseInt(bandwidth),
       databases: parseInt(databases),
       email_accounts: parseInt(emailAccounts),
-      ftp_accounts: 5,
-      subdomains: 5,
-      addon_domains: 5,
+      ftp_accounts: parseInt(ftpAccounts),
+      subdomains: parseInt(subdomains),
+      addon_domains: parseInt(addonDomains),
       parked_domains: 0,
       ssl_certificates: 1,
       daily_backups: 1,
@@ -121,12 +127,15 @@ export default function AdminPackages() {
     setBandwidth(pkg.bandwidth.toString());
     setDatabases(pkg.databases.toString());
     setEmailAccounts(pkg.email_accounts.toString());
+    setAddonDomains(pkg.addon_domains ? pkg.addon_domains.toString() : "5");
+    setSubdomains(pkg.subdomains ? pkg.subdomains.toString() : "5");
+    setFtpAccounts(pkg.ftp_accounts ? pkg.ftp_accounts.toString() : "5");
   };
 
   const handleUpdatePackage = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingPkg) return;
-    if (!name || !diskSpace || !bandwidth || !databases || !emailAccounts) {
+    if (!name || !diskSpace || !bandwidth || !databases || !emailAccounts || !addonDomains || !subdomains || !ftpAccounts) {
       setErrorMsg("All fields are required.");
       return;
     }
@@ -136,9 +145,9 @@ export default function AdminPackages() {
       bandwidth: parseInt(bandwidth),
       databases: parseInt(databases),
       email_accounts: parseInt(emailAccounts),
-      ftp_accounts: editingPkg.ftp_accounts || 5,
-      subdomains: editingPkg.subdomains || 5,
-      addon_domains: editingPkg.addon_domains || 5,
+      ftp_accounts: parseInt(ftpAccounts),
+      subdomains: parseInt(subdomains),
+      addon_domains: parseInt(addonDomains),
       parked_domains: editingPkg.parked_domains || 0,
       ssl_certificates: editingPkg.ssl_certificates || 1,
       daily_backups: editingPkg.daily_backups || 1,
@@ -243,6 +252,39 @@ export default function AdminPackages() {
                     <span className="font-medium text-gray-500">Email Accounts</span>
                     <span className="font-bold text-gray-800">
                       {pkg.email_accounts === 99 ? "Unlimited" : pkg.email_accounts}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Addon Domains */}
+                <div className="flex items-center space-x-3">
+                  <Share2 className="w-4 h-4 text-gray-400" />
+                  <div className="flex-1 flex justify-between">
+                    <span className="font-medium text-gray-500">Addon Domains</span>
+                    <span className="font-bold text-gray-800">
+                      {pkg.addon_domains === 99 ? "Unlimited" : (pkg.addon_domains || 5)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Subdomains */}
+                <div className="flex items-center space-x-3">
+                  <BadgeCheck className="w-4 h-4 text-gray-400" />
+                  <div className="flex-1 flex justify-between">
+                    <span className="font-medium text-gray-500">Subdomains</span>
+                    <span className="font-bold text-gray-800">
+                      {pkg.subdomains === 99 ? "Unlimited" : (pkg.subdomains || 5)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* FTP Accounts */}
+                <div className="flex items-center space-x-3">
+                  <HardDrive className="w-4 h-4 text-gray-400" />
+                  <div className="flex-1 flex justify-between">
+                    <span className="font-medium text-gray-500">FTP Accounts</span>
+                    <span className="font-bold text-gray-800">
+                      {pkg.ftp_accounts === 99 ? "Unlimited" : (pkg.ftp_accounts || 5)}
                     </span>
                   </div>
                 </div>
@@ -355,6 +397,42 @@ export default function AdminPackages() {
                     placeholder="Email quota e.g. 10"
                     value={emailAccounts}
                     onChange={(e) => setEmailAccounts(e.target.value)}
+                    className="w-full bg-gray-50 border border-gray-200 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 text-gray-800"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-gray-500 uppercase block">Max Addon Domains *</label>
+                  <input
+                    type="number"
+                    placeholder="Addon domains limit e.g. 5"
+                    value={addonDomains}
+                    onChange={(e) => setAddonDomains(e.target.value)}
+                    className="w-full bg-gray-50 border border-gray-200 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 text-gray-800"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-gray-500 uppercase block">Max Subdomains *</label>
+                  <input
+                    type="number"
+                    placeholder="Subdomains limit e.g. 5"
+                    value={subdomains}
+                    onChange={(e) => setSubdomains(e.target.value)}
+                    className="w-full bg-gray-50 border border-gray-200 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 text-gray-800"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-gray-500 uppercase block">Max FTP Accounts *</label>
+                  <input
+                    type="number"
+                    placeholder="FTP accounts limit e.g. 5"
+                    value={ftpAccounts}
+                    onChange={(e) => setFtpAccounts(e.target.value)}
                     className="w-full bg-gray-50 border border-gray-200 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 text-gray-800"
                     required
                   />

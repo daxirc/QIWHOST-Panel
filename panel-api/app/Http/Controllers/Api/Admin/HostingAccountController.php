@@ -77,6 +77,15 @@ class HostingAccountController extends Controller
                 $chown = new Process(['sudo', 'chown', '-R', "{$validated['system_username']}:www-data", "/home/{$validated['system_username']}/public_html"]);
                 $chown->run();
 
+                $chmodPublicHtml = new Process(['sudo', 'chmod', '775', "/home/{$validated['system_username']}/public_html"]);
+                $chmodPublicHtml->run();
+
+                $chmodHome = new Process(['sudo', 'chmod', '750', "/home/{$validated['system_username']}"]);
+                $chmodHome->run();
+
+                $usermod = new Process(['sudo', 'usermod', '-aG', $validated['system_username'], 'www-data']);
+                $usermod->run();
+
                 // Set disk quota using setquota
                 try {
                     $setQuota = new Process([
@@ -135,6 +144,14 @@ class HostingAccountController extends Controller
                                 "}\n\n" .
                                 "accessControl  {\n" .
                                 "  allow                   *\n" .
+                                "}\n\n" .
+                                "context /webmail/ {\n" .
+                                "  location                /var/lib/roundcube/\n" .
+                                "  allowBrowse             1\n" .
+                                "}\n\n" .
+                                "context /phpmyadmin/ {\n" .
+                                "  location                /usr/share/phpmyadmin/\n" .
+                                "  allowBrowse             1\n" .
                                 "}\n";
 
                 // Write vhost stub

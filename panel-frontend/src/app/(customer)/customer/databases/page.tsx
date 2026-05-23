@@ -48,6 +48,17 @@ export default function CustomerDatabases() {
 
   const databases = Array.isArray(databasesRes) ? databasesRes : [];
 
+  // Fetch customer dashboard metrics to get system username prefix
+  const { data: customerData } = useQuery({
+    queryKey: ["customer", "dashboard"],
+    queryFn: async () => {
+      const response = await API.get("/customer/dashboard");
+      return response.data.data;
+    },
+  });
+
+  const systemUsername = customerData?.account?.username || "user";
+
   // Create Database & User Mutation
   const createDbMutation = useMutation({
     mutationFn: async (payload: any) => {
@@ -170,7 +181,7 @@ export default function CustomerDatabases() {
           className="bg-primary hover:bg-primary-hover text-white px-4 py-2.5 rounded-lg font-semibold shadow-md flex items-center justify-center gap-2 transition-all"
         >
           <Plus className="w-5 h-5" />
-          <span>Provision Database</span>
+          <span>Create Database</span>
         </button>
       </div>
 
@@ -467,7 +478,7 @@ export default function CustomerDatabases() {
             <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
               <h2 className="font-bold text-gray-800 text-lg flex items-center gap-2">
                 <DbIcon className="w-5 h-5 text-primary" />
-                Deploy SQL Database
+                Create Database
               </h2>
               <button 
                 onClick={() => setIsAddDbOpen(false)}
@@ -484,7 +495,7 @@ export default function CustomerDatabases() {
                 </label>
                 <div className="flex items-center">
                   <span className="bg-gray-100 border border-r-0 border-gray-200 text-gray-500 px-3 py-2.5 text-sm rounded-l-lg font-mono font-bold">
-                    db_
+                    {systemUsername}_
                   </span>
                   <input
                     type="text"
@@ -503,7 +514,7 @@ export default function CustomerDatabases() {
                 </label>
                 <div className="flex items-center">
                   <span className="bg-gray-100 border border-r-0 border-gray-200 text-gray-500 px-3 py-2.5 text-sm rounded-l-lg font-mono font-bold">
-                    user_
+                    {systemUsername}_
                   </span>
                   <input
                     type="text"
@@ -544,7 +555,7 @@ export default function CustomerDatabases() {
                   disabled={createDbMutation.isPending}
                   className="bg-primary hover:bg-primary-hover text-white px-5 py-2 rounded-lg text-sm font-semibold shadow-md flex items-center gap-2 transition-all"
                 >
-                  {createDbMutation.isPending ? "Deploying..." : "Provision Database"}
+                  {createDbMutation.isPending ? "Deploying..." : "Create Database"}
                 </button>
               </div>
             </form>

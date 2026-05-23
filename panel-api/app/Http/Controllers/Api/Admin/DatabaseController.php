@@ -79,8 +79,7 @@ class DatabaseController extends Controller
                    "GRANT ALL PRIVILEGES ON `{$fullDbName}`.* TO '{$fullDbUser}'@'localhost'; " .
                    "FLUSH PRIVILEGES;";
 
-            $process = new Process(['mysql', '-u', 'root', '-e', $sql]);
-            $process->run();
+            $this->runMysql($sql);
         } catch (\Exception $e) {}
 
         // Save Database record
@@ -126,8 +125,7 @@ class DatabaseController extends Controller
 
         try {
             $sql = "DROP DATABASE IF EXISTS `{$fullDbName}`;";
-            $process = new Process(['mysql', '-u', 'root', '-e', $sql]);
-            $process->run();
+            $this->runMysql($sql);
         } catch (\Exception $e) {}
 
         $database->delete();
@@ -161,8 +159,7 @@ class DatabaseController extends Controller
                    "GRANT ALL PRIVILEGES ON `{$fullDbName}`.* TO '{$fullDbUser}'@'localhost'; " .
                    "FLUSH PRIVILEGES;";
 
-            $process = new Process(['mysql', '-u', 'root', '-e', $sql]);
-            $process->run();
+            $this->runMysql($sql);
         } catch (\Exception $e) {}
 
         $user = DatabaseUser::create([
@@ -188,8 +185,7 @@ class DatabaseController extends Controller
                    "DROP USER IF EXISTS '{$fullDbUser}'@'localhost'; " .
                    "FLUSH PRIVILEGES;";
 
-            $process = new Process(['mysql', '-u', 'root', '-e', $sql]);
-            $process->run();
+            $this->runMysql($sql);
         } catch (\Exception $e) {}
 
         $user->delete();
@@ -211,8 +207,7 @@ class DatabaseController extends Controller
         try {
             $sql = "ALTER USER '{$fullDbUser}'@'localhost' IDENTIFIED BY '{$validated['password']}'; " .
                    "FLUSH PRIVILEGES;";
-            $process = new Process(['mysql', '-u', 'root', '-e', $sql]);
-            $process->run();
+            $this->runMysql($sql);
         } catch (\Exception $e) {}
 
         $user->update([
@@ -256,5 +251,14 @@ class DatabaseController extends Controller
             // Local sandbox fallback
             return $this->successResponse(null, "Database {$fullDbName} repaired in sandbox fallback mode.");
         }
+    }
+
+    private function runMysql($sql)
+    {
+        $rootPass = env('DB_ROOT_PASSWORD');
+        $cmd = $rootPass ? ['mysql', '-u', 'root', "-p{$rootPass}", '-e', $sql] : ['mysql', '-u', 'root', '-e', $sql];
+        $process = new Process($cmd);
+        $process->run();
+        return $process;
     }
 }

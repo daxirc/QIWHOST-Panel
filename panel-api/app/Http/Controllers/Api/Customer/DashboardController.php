@@ -47,7 +47,18 @@ class DashboardController extends Controller
             $emailsCount = $account->emailAccounts()->count();
             $databasesCount = $account->databases()->count();
             
-            $ipAddress = \App\Models\Setting::where('key', 'server_ip')->value('value') ?? '127.0.0.1';
+            $ipAddress = '127.0.0.1';
+            if (file_exists('/etc/qiwhost/server_ip')) {
+                $ipAddress = trim(file_get_contents('/etc/qiwhost/server_ip'));
+            } else {
+                $ipAddress = \App\Models\Setting::where('key', 'server_ip')->value('value') 
+                    ?? $request->server('SERVER_ADDR') 
+                    ?? $request->getHost() 
+                    ?? '127.0.0.1';
+            }
+            
+            $ns1 = \App\Models\Setting::where('key', 'ns1')->value('value') ?? 'ns1.node1.qiwhost.com';
+            $ns2 = \App\Models\Setting::where('key', 'ns2')->value('value') ?? 'ns2.node1.qiwhost.com';
             
             return response()->json([
                 'success' => true,
@@ -64,6 +75,8 @@ class DashboardController extends Controller
                         'created_at' => $account->setup_date ?? $account->created_at,
                         'setup_date' => $account->setup_date ?? $account->created_at,
                         'expiry_date' => $account->expiry_date ?? ($account->setup_date ? $account->setup_date->addYear() : now()->addYear()),
+                        'ns1' => $ns1,
+                        'ns2' => $ns2,
                     ],
                     
                     // ONLY allocated resources - NO real server info

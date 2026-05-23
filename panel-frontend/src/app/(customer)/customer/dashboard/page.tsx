@@ -199,10 +199,7 @@ export default function CustomerDashboard() {
             </div>
           </div>
 
-          <div className="pt-5 border-t border-gray-100 flex items-center space-x-2 text-xs text-gray-400 font-semibold mt-4">
-            <Clock className="w-4 h-4 text-gray-400" />
-            <span>Expires on: {new Date(account?.expiry_date).toLocaleDateString()}</span>
-          </div>
+
         </div>
 
         {/* Resource Consumption Progress Bars (Allocated Resources Only) */}

@@ -234,8 +234,7 @@ class DatabaseController extends Controller
                     $sql = "CREATE USER IF NOT EXISTS '{$fullUser}'@'{$ip}' IDENTIFIED BY 'ali12345'; " .
                            "GRANT ALL PRIVILEGES ON `{$account->system_username}\_%`.* TO '{$fullUser}'@'{$ip}'; " .
                            "FLUSH PRIVILEGES;";
-                    $process = new Process(['mysql', '-u', 'root', '-e', $sql]);
-                    $process->run();
+                    $this->runMysql($sql);
                 } catch (\Exception $e) {}
             }
 
@@ -244,5 +243,14 @@ class DatabaseController extends Controller
         } catch (\Exception $e) {
             return $this->errorResponse($e->getMessage());
         }
+    }
+
+    private function runMysql($sql)
+    {
+        $rootPass = env('DB_ROOT_PASSWORD');
+        $cmd = $rootPass ? ['mysql', '-u', 'root', "-p{$rootPass}", '-e', $sql] : ['mysql', '-u', 'root', '-e', $sql];
+        $process = new Process($cmd);
+        $process->run();
+        return $process;
     }
 }

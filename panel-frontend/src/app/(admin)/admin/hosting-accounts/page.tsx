@@ -355,7 +355,7 @@ export default function AdminHostingAccounts() {
                     <option value="">-- Choose Package --</option>
                     {packages?.map((pkg: any) => (
                       <option key={pkg.id} value={pkg.id}>
-                        {pkg.name} (${pkg.price}/mo)
+                        {pkg.name} ({pkg.disk_space}MB Disk / {pkg.bandwidth}GB Bandwidth)
                       </option>
                     ))}
                   </select>
