@@ -57,13 +57,13 @@ class ProfileController extends Controller
         $customer = $request->user();
         
         // Fetch active API access tokens
-        $tokens = $customer->tokens()->get()->map(function ($token) {
+        $tokens = $customer->tokens()->get()->map(function ($token) use ($request) {
             return [
                 'id' => $token->id,
                 'name' => $token->name,
                 'last_used_at' => $token->last_used_at ? $token->last_used_at->toIso8601String() : null,
                 'created_at' => $token->created_at->toIso8601String(),
-                'ip_address' => '127.0.0.1', // Mock IP mapping
+                'ip_address' => $request->header('X-Forwarded-For') ?? $request->ip() ?? '127.0.0.1',
             ];
         });
 

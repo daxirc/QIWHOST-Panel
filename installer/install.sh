@@ -62,20 +62,15 @@ step_header() {
 run_cmd() {
     local cmd="$1"
     local desc="$2"
-    
     echo -e "${CYAN}Running: $desc...${NC}"
-    echo "--- Executing command at $(date): $cmd ---" >> "$LOG_FILE"
-    
-    # Run the command and redirect stdout & stderr to the log file
-    eval "$cmd" >> "$LOG_FILE" 2>&1
+    echo "--- $desc at $(date) ---" >> "$LOG_FILE"
+    bash -c "$cmd" >> "$LOG_FILE" 2>&1
     local status=$?
-    
     if [ $status -ne 0 ]; then
-        log_error "$desc failed with exit code $status. Installation halted."
-        log_error "Please check the log file for exact details: $LOG_FILE"
+        log_error "$desc FAILED (exit: $status) - check $LOG_FILE"
         exit $status
     fi
-    log_success "$desc completed successfully."
+    log_success "$desc done."
 }
 
 # ==============================================================================
@@ -170,10 +165,10 @@ if [ -f "$CONFIG_FILE" ]; then
     ADMIN_PASSWORD="$ADMIN_PASSWORD"
 else
     log_info "No prior configuration found. Auto-generating secure passwords..."
-    MYSQL_ROOT_PASS=$(openssl rand -base64 24 | tr -d "=+/")
-    PANEL_DB_PASS=$(openssl rand -base64 20 | tr -d "=+/")
-    ROUNDCUBE_DB_PASS=$(openssl rand -base64 16 | tr -d "=+/")
-    ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -d "=+/" | cut -c1-16)
+    ADMIN_PASSWORD=$(openssl rand -base64 20 | tr -dc 'a-zA-Z0-9' | cut -c1-16)
+    MYSQL_ROOT_PASS=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | cut -c1-24)
+    PANEL_DB_PASS=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | cut -c1-20)
+    ROUNDCUBE_DB_PASS=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | cut -c1-16)
 fi
 
 echo -e "\n${CYAN}--- Installation Settings Summary ---${NC}"
@@ -202,11 +197,37 @@ run_cmd "apt-get install -y curl wget git unzip software-properties-common apt-t
 step_header "OpenLiteSpeed Web Server Installation"
 run_cmd "wget -O - https://repo.litespeed.sh | bash" "Adding OpenLiteSpeed repository"
 run_cmd "apt-get install -y openlitespeed" "Installing OpenLiteSpeed Web Server"
-run_cmd "apt-get install -y lsphp81 lsphp81-common lsphp81-mysql lsphp81-curl lsphp81-zip lsphp81-mbstring lsphp81-xml lsphp81-gd lsphp81-bcmath" "Installing LSPHP 8.1"
-run_cmd "apt-get install -y lsphp82 lsphp82-common lsphp82-mysql lsphp82-curl lsphp82-zip lsphp82-mbstring lsphp82-xml lsphp82-gd lsphp82-bcmath" "Installing LSPHP 8.2"
-run_cmd "apt-get install -y lsphp83 lsphp83-common lsphp83-mysql lsphp83-curl lsphp83-zip lsphp83-mbstring lsphp83-xml lsphp83-gd lsphp83-bcmath lsphp83-intl lsphp83-opcache" "Installing LSPHP 8.3"
+run_cmd "apt-get install -y lsphp81 lsphp81-common lsphp81-mysql lsphp81-curl lsphp81-intl lsphp81-opcache lsphp81-redis lsphp81-sqlite3" "Installing LSPHP 8.1"
+run_cmd "apt-get install -y lsphp82 lsphp82-common lsphp82-mysql lsphp82-curl lsphp82-intl lsphp82-opcache lsphp82-redis lsphp82-sqlite3" "Installing LSPHP 8.2"
+run_cmd "apt-get install -y lsphp83 lsphp83-common lsphp83-mysql lsphp83-curl lsphp83-intl lsphp83-opcache lsphp83-redis lsphp83-sqlite3" "Installing LSPHP 8.3"
 run_cmd "systemctl enable lsws" "Enabling OpenLiteSpeed service"
 run_cmd "systemctl start lsws" "Starting OpenLiteSpeed service"
+
+# Disable Apache if installed
+run_cmd "systemctl stop apache2 2>/dev/null || true" "Stopping Apache if running"
+run_cmd "systemctl disable apache2 2>/dev/null || true" "Disabling Apache"
+
+# Change OLS default port from 8088 to 80
+run_cmd "sed -i 's/address.*\*:8088/address                  *:80/' /usr/local/lsws/conf/httpd_config.conf" "Configuring OLS on port 80"
+run_cmd "systemctl restart lsws" "Restarting OLS on port 80"
+
+# Setup www-data sudo permissions for hosting provisioning
+cat > /etc/sudoers.d/qiwhost-www-data << 'SUDOEOF'
+www-data ALL=(ALL) NOPASSWD: /usr/sbin/useradd
+www-data ALL=(ALL) NOPASSWD: /usr/sbin/userdel
+www-data ALL=(ALL) NOPASSWD: /usr/bin/chpasswd
+www-data ALL=(ALL) NOPASSWD: /bin/mkdir
+www-data ALL=(ALL) NOPASSWD: /bin/chown
+www-data ALL=(ALL) NOPASSWD: /bin/chmod
+www-data ALL=(ALL) NOPASSWD: /usr/sbin/setquota
+www-data ALL=(ALL) NOPASSWD: /bin/mv
+www-data ALL=(ALL) NOPASSWD: /bin/rm
+www-data ALL=(ALL) NOPASSWD: /usr/sbin/service
+www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl
+www-data ALL=(ALL) NOPASSWD: /usr/local/lsws/bin/lswsctrl
+SUDOEOF
+chmod 440 /etc/sudoers.d/qiwhost-www-data
+run_cmd "visudo -c" "Validating sudoers syntax"
 
 # Verify OpenLiteSpeed is active
 systemctl is-active --quiet lsws || { log_error "OpenLiteSpeed failed to start."; exit 1; }
@@ -218,11 +239,14 @@ log_success "OpenLiteSpeed is up and running."
 step_header "PHP CLI & Composer Installation"
 run_cmd "add-apt-repository ppa:ondrej/php -y" "Adding PHP PPA repository"
 run_cmd "apt-get update -y" "Updating repository listings for PPA"
-run_cmd "apt-get install -y php8.3-cli php8.3-fpm php8.3-mysql php8.3-curl php8.3-zip php8.3-mbstring php8.3-xml php8.3-bcmath php8.3-gd php8.3-intl php8.3-redis php8.3-opcache" "Installing PHP 8.3 CLI and modules"
-run_cmd "curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer" "Downloading and installing Composer"
+run_cmd "apt-get install -y php8.3-cli php8.3-fpm php8.3-mysql php8.3-curl php8.3-zip php8.3-mbstring php8.3-xml php8.3-dom php8.3-bcmath php8.3-gd php8.3-intl php8.3-redis php8.3-opcache" "Installing PHP 8.3 CLI and modules"
+run_cmd "apt-get install -y php8.3-xml php8.3-dom" "Installing PHP DOM extension"
+run_cmd "update-alternatives --set php /usr/bin/php8.3 2>/dev/null || true" "Setting PHP 8.3 as system default"
+run_cmd "apt-get install -y ufw" "Ensuring UFW is installed"
+run_cmd "curl -sS https://getcomposer.org/installer | php8.3 -- --install-dir=/usr/local/bin --filename=composer" "Downloading and installing Composer"
 
 # Verify Composer
-composer --version >/dev/null 2>&1 || { log_error "Composer installation verification failed."; exit 1; }
+php8.3 /usr/local/bin/composer --version >/dev/null 2>&1 || { log_error "Composer installation verification failed."; exit 1; }
 log_success "Composer is active."
 
 # ==============================================================================
@@ -371,6 +395,13 @@ rewrite {
 }
 EOF
 
+# Register webmail in httpd_config.conf as proper virtualhost block
+vhostRegister="\nvirtualhost webmail {\n  vhRoot                  /var/lib/roundcube/\n  configFile              conf/vhosts/webmail/vhconf.conf\n  allowSymbolLink         1\n  enableScript            1\n  restrained              1\n}\n"
+run_cmd "echo -e \"\$vhostRegister\" >> /usr/local/lsws/conf/httpd_config.conf" "Registering webmail virtual host in OLS config"
+
+# Map in Default listener as: map webmail webmail
+run_cmd "sed -i '/listener Default{/a\\    map                      webmail webmail' /usr/local/lsws/conf/httpd_config.conf" "Mapping webmail in Default listener"
+
 # ==============================================================================
 # STEP 11: Install phpMyAdmin
 # ==============================================================================
@@ -414,6 +445,13 @@ scripthandler {
 }
 EOF
 
+# Register phpmyadmin in httpd_config.conf as proper virtualhost block
+pmaRegister="\nvirtualhost phpmyadmin {\n  vhRoot                  /usr/share/phpmyadmin/\n  configFile              conf/vhosts/phpmyadmin/vhconf.conf\n  allowSymbolLink         1\n  enableScript            1\n  restrained              1\n}\n"
+run_cmd "echo -e \"\$pmaRegister\" >> /usr/local/lsws/conf/httpd_config.conf" "Registering phpMyAdmin virtual host in OLS config"
+
+# Map in Default listener as: map phpmyadmin phpmyadmin
+run_cmd "sed -i '/listener Default{/a\\    map                      phpmyadmin phpmyadmin' /usr/local/lsws/conf/httpd_config.conf" "Mapping phpMyAdmin in Default listener"
+
 # Restart OpenLiteSpeed Server to load Virtual Hosts configurations
 run_cmd "systemctl restart lsws" "Restarting OpenLiteSpeed Server"
 
@@ -439,7 +477,7 @@ run_cmd "systemctl enable clamav-daemon clamav-freshclam && systemctl start clam
 step_header "Cloning & Configuring QIWHOST Panel"
 run_cmd "mkdir -p /opt/qiwhost" "Creating QIWHOST base folder"
 run_cmd "if [ -d /opt/qiwhost/.git ]; then cd /opt/qiwhost && git fetch --all && git reset --hard origin/main; else git clone https://github.com/daxirc/QIWHOST-Panel.git /opt/qiwhost; fi" "Cloning or updating QIWHOST Panel repository"
-run_cmd "cd /opt/qiwhost/panel-api && composer install --no-dev --optimize-autoloader --no-interaction" "Installing Laravel API composer dependencies"
+run_cmd "cd /opt/qiwhost/panel-api && php8.3 /usr/local/bin/composer install --no-dev --optimize-autoloader --no-interaction" "Installing Laravel API composer dependencies"
 
 # Write Laravel .env configuration
 cat > /opt/qiwhost/panel-api/.env << 'EOF'
@@ -480,9 +518,9 @@ run_cmd "sed -i 's/DB_PASSWORD_PLACEHOLDER/'\"$PANEL_DB_PASS\"'/g' /opt/qiwhost/
 run_cmd "sed -i 's/ADMIN_EMAIL_PLACEHOLDER/'\"$ADMIN_EMAIL\"'/g' /opt/qiwhost/panel-api/.env" "Applying admin email to Laravel .env"
 
 # Execute artisan bootstrapping
-run_cmd "cd /opt/qiwhost/panel-api && php artisan key:generate --force" "Generating Laravel application key"
-run_cmd "cd /opt/qiwhost/panel-api && php artisan migrate --force" "Executing all 24 database migrations"
-run_cmd "cd /opt/qiwhost/panel-api && php artisan db:seed --force" "Seeding initial roles and permissions"
+run_cmd "cd /opt/qiwhost/panel-api && php8.3 artisan key:generate --force" "Generating Laravel application key"
+run_cmd "cd /opt/qiwhost/panel-api && php8.3 artisan migrate --force" "Executing all 24 database migrations"
+run_cmd "cd /opt/qiwhost/panel-api && php8.3 artisan db:seed --force" "Seeding initial roles and permissions"
 
 # FIX 5 - Verification: Check that the seeder did not create any sample customers
 CUSTOMER_COUNT=$(mysql -u qiwpanel -p"$PANEL_DB_PASS" qiwpanel -sNe "SELECT COUNT(*) FROM customers;" 2>/dev/null)
@@ -524,7 +562,7 @@ $user->save();
 echo "Admin user provisioned: " . $user->email . PHP_EOL;
 PHPEOF
 
-run_cmd "ADMIN_EMAIL=\"$ADMIN_EMAIL\" ADMIN_PASSWORD=\"$ADMIN_PASSWORD\" php /opt/qiwhost/panel-api/create_admin.php" "Executing Administrator provisioning script"
+run_cmd "ADMIN_EMAIL=\"$ADMIN_EMAIL\" ADMIN_PASSWORD=\"$ADMIN_PASSWORD\" php8.3 /opt/qiwhost/panel-api/create_admin.php" "Executing Administrator provisioning script"
 rm -f /opt/qiwhost/panel-api/create_admin.php
 
 # FIX 1 - Seed Hostname & Cluster System settings (`group` column renamed from `group_name`)
@@ -543,10 +581,9 @@ ON DUPLICATE KEY UPDATE value=VALUES(value);
 # STEP 16: Build Next.js Frontend
 # ==============================================================================
 step_header "Next.js Frontend Compilations"
+SERVER_IP=$(hostname -I | awk '{print $1}')
+run_cmd "echo 'NEXT_PUBLIC_API_URL=http://$SERVER_IP:8080/api' > /opt/qiwhost/panel-frontend/.env.local" "Setting Next.js local environment variables"
 run_cmd "cd /opt/qiwhost/panel-frontend && npm install --production=false" "Installing Next.js frontend node packages"
-run_cmd "cat > /opt/qiwhost/panel-frontend/.env.local << EOF
-NEXT_PUBLIC_API_URL=http://$SERVER_HOSTNAME:8080/api
-EOF" "Setting Next.js local environment variables"
 run_cmd "cd /opt/qiwhost/panel-frontend && npm run build" "Building Next.js optimized production package"
 run_cmd "npm install -g serve" "Installing serve package globally"
 run_cmd "chown -R www-data:www-data /opt/qiwhost/panel-frontend" "Setting Next.js frontend folder ownership to www-data"
@@ -566,10 +603,11 @@ After=network.target mysql.service redis.service
 Type=simple
 User=www-data
 WorkingDirectory=/opt/qiwhost/panel-api
-ExecStart=/usr/bin/php artisan serve --host=0.0.0.0 --port=8080
+ExecStart=/usr/bin/php8.3 artisan serve --host=0.0.0.0 --port=8080
 Restart=always
 RestartSec=5
 Environment=APP_ENV=production
+Environment=REMOTE_ADDR_FORWARDED=true
 
 [Install]
 WantedBy=multi-user.target
@@ -585,7 +623,7 @@ After=network.target mysql.service redis.service
 Type=simple
 User=www-data
 WorkingDirectory=/opt/qiwhost/panel-api
-ExecStart=/usr/bin/php artisan queue:work --sleep=3 --tries=3 --timeout=90
+ExecStart=/usr/bin/php8.3 artisan queue:work --sleep=3 --tries=3 --timeout=90
 Restart=always
 RestartSec=5
 
@@ -620,8 +658,8 @@ run_cmd "systemctl enable qiwhost-api qiwhost-queue qiwhost-frontend" "Enabling 
 run_cmd "systemctl restart qiwhost-api qiwhost-queue qiwhost-frontend" "Triggering start on panel background services"
 
 # Cron scheduling setup
-run_cmd "echo '* * * * * www-data cd /opt/qiwhost/panel-api && php artisan schedule:run >> /dev/null 2>&1' > /etc/cron.d/qiwhost-scheduler" "Adding Laravel cron scheduler task"
-run_cmd "echo '0 3 * * * www-data cd /opt/qiwhost/panel-api && php artisan security:scan --quarantine >> /var/log/qiwhost_security.log 2>&1' > /etc/cron.d/qiwhost-security" "Adding daily security scanning cronjob"
+run_cmd "echo '* * * * * www-data cd /opt/qiwhost/panel-api && php8.3 artisan schedule:run >> /dev/null 2>&1' > /etc/cron.d/qiwhost-scheduler" "Adding Laravel cron scheduler task"
+run_cmd "echo '0 3 * * * www-data cd /opt/qiwhost/panel-api && php8.3 artisan security:scan --quarantine >> /var/log/qiwhost_security.log 2>&1' > /etc/cron.d/qiwhost-security" "Adding daily security scanning cronjob"
 run_cmd "echo '0 0 * * * root certbot renew --quiet' > /etc/cron.d/qiwhost-ssl-renewal" "Adding daily SSL renewal cronjob"
 
 # ==============================================================================

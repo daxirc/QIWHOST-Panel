@@ -200,6 +200,10 @@ Route::middleware(['auth:sanctum', 'enforce.limits', 'rate.customer'])->prefix('
     Route::post('/wordpress/{id}/backup', [CustomerWordPressController::class, 'createBackup']);
     Route::delete('/wordpress/{id}', [CustomerWordPressController::class, 'destroy']);
 
+    Route::get('/domains', [CustomerDomainController::class, 'index']);
+    Route::post('/domains', [CustomerDomainController::class, 'store']);
+    Route::delete('/domains/{id}', [CustomerDomainController::class, 'destroy']);
+
     Route::apiResource('cron-jobs', CustomerCronJobController::class);
     
     Route::get('/backups', [CustomerBackupController::class, 'index']);

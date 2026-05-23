@@ -26,13 +26,22 @@ class DomainController extends Controller
 
     public function index(Request $request)
     {
-        try {
-            $account = $this->getHostingAccount($request);
-            $domains = $account->domains()->get();
-            return $this->successResponse($domains, 'Domains retrieved successfully.');
-        } catch (\Exception $e) {
-            return $this->errorResponse($e->getMessage());
+        $customer = $request->user();
+        $account = $customer->hostingAccounts()->with('domains')->first();
+        if (!$account) {
+            return response()->json(['success' => true, 'data' => []]);
         }
+        $domains = $account->domains()->get()->map(function($domain) {
+            return [
+                'id' => $domain->id,
+                'domain' => $domain->domain,
+                'type' => $domain->is_main ? 'primary' : 'addon',
+                'document_root' => $domain->domain_root ?? $domain->domain_public,
+                'ssl_enabled' => $domain->ssl_enabled ?? false,
+                'status' => $domain->status ?? 'active',
+            ];
+        });
+        return response()->json(['success' => true, 'data' => $domains]);
     }
 
     public function store(Request $request)

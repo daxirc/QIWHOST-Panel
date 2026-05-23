@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const baseURL = process.env.NEXT_PUBLIC_API_URL || "http://172.30.185.15:8000/api";
+const baseURL = process.env.NEXT_PUBLIC_API_URL || "";
 
 // 1. Admin API axios instance
 export const AdminAPI = axios.create({

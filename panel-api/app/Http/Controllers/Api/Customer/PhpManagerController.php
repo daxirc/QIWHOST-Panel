@@ -28,7 +28,19 @@ class PhpManagerController extends Controller
     public function getConfig(Request $request)
     {
         try {
-            $account = $this->getHostingAccount($request);
+            $customer = $request->user();
+            $hostingAccountId = $request->header('X-Hosting-Account-Id') ?? $request->input('hosting_account_id');
+            $account = $hostingAccountId 
+                ? $customer->hostingAccounts()->find($hostingAccountId) 
+                : $customer->hostingAccounts()->first();
+
+            if (!$account) {
+                return response()->json([
+                    'success' => true, 
+                    'data' => ['php_version' => '8.3', 'settings' => []]
+                ]);
+            }
+
             $adminController = new AdminPhpManagerController();
             return $adminController->getPhpConfig($account->id);
         } catch (\Exception $e) {

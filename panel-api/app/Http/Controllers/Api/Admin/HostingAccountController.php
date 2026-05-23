@@ -162,8 +162,21 @@ class HostingAccountController extends Controller
                 $appendProc->setInput($vhostRegister);
                 $appendProc->run();
 
-                // Reload OpenLiteSpeed to activate changes
-                $reloadLSWS = new Process(['sudo', 'service', 'lsws', 'restart']);
+                // Add to listener Default in httpd_config.conf
+                $domainName = $validated['domain'];
+                $process = new Process(['sudo', 'sed', '-i',
+                    "/listener Default{/a\\    map                      {$domainName} {$domainName}",
+                    '/usr/local/lsws/conf/httpd_config.conf'
+                ]);
+                $process->run();
+
+                // Reload OpenLiteSpeed gracefully to activate changes
+                $pid = @file_get_contents('/usr/local/lsws/logs/lshttpd.pid');
+                if ($pid) {
+                    $reloadLSWS = new Process(['sudo', 'kill', '-USR1', trim($pid)]);
+                } else {
+                    $reloadLSWS = new Process(['sudo', 'service', 'lsws', 'restart']);
+                }
                 $reloadLSWS->run();
 
             } catch (\Exception $e) {
