@@ -70,6 +70,26 @@ This document provides a comprehensive log of the resolutions applied to the 22 
 - **Problem**: Accessing `/webmail` on port 80 threw a 404 because OLS lacked listener mappings and virtual host configs.
 - **Resolution**: Configured OLS virtual hosts for both `webmail` (Roundcube) and `phpmyadmin` in `install.sh`. Registered both virtualhost blocks inside `/usr/local/lsws/conf/httpd_config.conf` and mapped them inside the Default port 80 listener.
 
+### BUG 23: OpenLiteSpeed Symlinked Systemd Alias Crash
+- **Problem**: Ubuntu 24.04 refuses to enable or manage symlinked systemd aliases (like `lsws` or `openlitespeed`).
+- **Resolution**: Updated `installer/install.sh` to target OLS's official underlying service name `lshttpd.service` directly and run `systemctl daemon-reload` prior to enabling/starting.
+
+### BUG 24: Composer Interactive Root Prompts Hanging
+- **Problem**: Running Composer as root in automated SSH interactive sessions prompted a warning/confirmation, which hung the installer script indefinitely since output was redirected.
+- **Resolution**: Exported `COMPOSER_ALLOW_SUPERUSER=1` globally at the top of the installer script, which completely bypasses root warning prompts.
+
+### BUG 25: SpamAssassin Systemd Service Name Mismatch
+- **Problem**: The systemd service unit for SpamAssassin is named `spamd.service` instead of `spamassassin.service` on Ubuntu 24.04, causing service start failures.
+- **Resolution**: Replaced `spamassassin` with `spamd` in all systemctl enabling and starting commands in `installer/install.sh`.
+
+### BUG 26: SQL Settings Seeding Shell Backtick Substitution Bug
+- **Problem**: Seeding settings dynamically using `mysql -e` with escaped backticks inside a double-quoted string caused the outer bash shell to parse them as active command substitutions (`group` and `key`), resulting in syntax errors.
+- **Resolution**: Refactored the seeding command to write the query safely to a temporary `/tmp/settings.sql` file using a heredoc and piped it directly into MySQL (`mysql < /tmp/settings.sql`).
+
+### BUG 27: Next.js Frontend Daemon Executable Path Failure
+- **Problem**: The Next.js systemd unit was hardcoded to `/usr/local/bin/node` which returned a `203/EXEC` crash on standard Ubuntu setups where node is installed at `/usr/bin/node`.
+- **Resolution**: Corrected the Next.js frontend systemd unit descriptor to execute using `/usr/bin/node`.
+
 ---
 
 ## Listener Mappings for New Domains
@@ -80,3 +100,5 @@ This document provides a comprehensive log of the resolutions applied to the 22 
 ## Verification & Compilation Metrics
 1. **Next.js Frontend Build**: `npm run build` completed with **exactly 0 errors**.
 2. **System Installer Linting**: `bash -n installer/install.sh` syntax check passed with **0 errors**.
+3. **VPS Service Status**: Live service status diagnostics verified **100% active and running** for all 10 core panel services (`lshttpd`, `mysql`, `redis-server`, `postfix`, `dovecot`, `opendkim`, `spamd`, `qiwhost-api`, `qiwhost-queue`, and `qiwhost-frontend`).
+
