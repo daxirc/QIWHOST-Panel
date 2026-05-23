@@ -231,6 +231,8 @@ Route::middleware(['auth:sanctum', 'enforce.limits', 'rate.customer'])->prefix('
         Route::post('/{id}/restart', [CustomerNodeJsController::class, 'restart']);
         Route::get('/{id}/logs', [CustomerNodeJsController::class, 'logs']);
         Route::post('/{id}/git-deploy', [CustomerNodeJsController::class, 'gitDeploy']);
-        Route::delete('/{id}', [CustomerNodeJsController::class, 'destroy']);
     });
 });
+
+require base_path('routes/whmcs.php');
+

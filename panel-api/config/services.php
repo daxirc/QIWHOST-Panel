@@ -35,4 +35,8 @@ return [
         ],
     ],
 
+    'whmcs' => [
+        'secret_key' => env('WHMCS_SECRET_KEY', ''),
+    ],
+
 ];

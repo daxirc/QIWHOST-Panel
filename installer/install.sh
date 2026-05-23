@@ -726,6 +726,9 @@ run_cmd "mkdir -p /etc/qiwhost && chmod 700 /etc/qiwhost" "Creating secure confi
 SERVER_IP=$(hostname -I | awk '{print $1}')
 echo "$SERVER_IP" > /etc/qiwhost/server_ip
 
+WHMCS_SECRET=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | cut -c1-32)
+echo "WHMCS_SECRET_KEY=$WHMCS_SECRET" >> /opt/qiwhost/panel-api/.env
+
 cat > "$CONFIG_FILE" << EOF
 # QIWHOST Panel Installation Config
 # Generated: $(date)
@@ -749,6 +752,7 @@ ROUNDCUBE_DB_PASSWORD=$ROUNDCUBE_DB_PASS
 PANEL_FRONTEND_URL=http://$SERVER_HOSTNAME:8443
 PANEL_API_URL=http://$SERVER_HOSTNAME:8080
 WEBMAIL_URL=http://$SERVER_HOSTNAME/webmail
+WHMCS_SECRET_KEY=$WHMCS_SECRET
 EOF
 
 chmod 600 "$CONFIG_FILE"
@@ -794,6 +798,7 @@ echo -e "${CYAN}║                                                             
 echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
 echo -e "${CYAN}║  Admin Email:    ${GREEN}$ADMIN_EMAIL${CYAN}                               ║${NC}"
 echo -e "${CYAN}║  Admin Password: ${GREEN}$ADMIN_PASSWORD${CYAN}                            ║${NC}"
+echo -e "${CYAN}║  WHMCS Token:    ${GREEN}$WHMCS_SECRET${CYAN}                              ║${NC}"
 echo -e "${CYAN}║                                                              ║${NC}"
 echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
 echo -e "${CYAN}║  Credentials saved to: ${PURPLE}/etc/qiwhost/install.conf${CYAN}            ║${NC}"
