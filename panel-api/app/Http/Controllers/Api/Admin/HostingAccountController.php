@@ -244,8 +244,94 @@ class HostingAccountController extends Controller
         }
 
         try {
-            // Lock OS user password using Symfony Process
+            // 1. Lock OS user password
             $proc = new Process(['sudo', 'passwd', '-l', $account->system_username]);
+            $proc->run();
+
+            // 2. Disable OLS vhost by renaming vhconf.conf
+            $vhostConf = "/usr/local/lsws/conf/vhosts/{$account->domain}/vhconf.conf";
+            $vhostConfDisabled = "/usr/local/lsws/conf/vhosts/{$account->domain}/vhconf.conf.disabled";
+
+            $checkProc = new Process(['sudo', 'test', '-f', $vhostConf]);
+            $checkProc->run();
+            if ($checkProc->isSuccessful()) {
+                $mvProc = new Process(['sudo', 'mv', $vhostConf, $vhostConfDisabled]);
+                $mvProc->run();
+            }
+
+            // 3. Remove domain from OLS listener map
+            $proc = new Process(['sudo', 'sed', '-i',
+                "/map.*{$account->domain}/d",
+                '/usr/local/lsws/conf/httpd_config.conf'
+            ]);
+            $proc->run();
+
+            // 4. Create suspended page html in /tmp and mv it to user's home securely
+            $suspendedHtml = <<<HTML
+<!DOCTYPE html>
+<html>
+<head>
+<title>Account Suspended</title>
+<style>
+body { font-family: sans-serif; text-align: center; padding: 80px; background: #f8f8f8; }
+.box { background: #fff; border: 2px solid #e74c3c; border-radius: 8px; padding: 40px; max-width: 500px; margin: 0 auto; }
+h1 { color: #e74c3c; }
+p { color: #666; }
+</style>
+</head>
+<body>
+<div class="box">
+<h1>⚠️ Account Suspended</h1>
+<p>This hosting account has been suspended.</p>
+<p>Please contact support to restore access.</p>
+</div>
+</body>
+</html>
+HTML;
+
+            $tempSuspendedFile = "/tmp/suspended_" . uniqid() . ".html";
+            file_put_contents($tempSuspendedFile, $suspendedHtml);
+
+            $suspendedPath = "/home/{$account->system_username}/suspended.html";
+            $mvHtmlProc = new Process(['sudo', 'mv', $tempSuspendedFile, $suspendedPath]);
+            $mvHtmlProc->run();
+
+            $chownProc = new Process(['sudo', 'chown', "{$account->system_username}:www-data", $suspendedPath]);
+            $chownProc->run();
+
+            $chmodProc = new Process(['sudo', 'chmod', '644', $suspendedPath]);
+            $chmodProc->run();
+
+            // Create minimal vhconf that serves suspended page
+            $suspendedVhconf = <<<VHOST
+docRoot                   /home/{$account->system_username}/
+vhDomain                  {$account->domain}
+
+index  {
+  useServer               0
+  indexFiles              suspended.html
+}
+
+accessControl  {
+  allow                   *
+}
+VHOST;
+
+            $tempVhconfFile = "/tmp/vhconf_suspended_{$account->domain}_" . uniqid() . ".conf";
+            file_put_contents($tempVhconfFile, $suspendedVhconf);
+
+            $mvVhconfProc = new Process(['sudo', 'mv', $tempVhconfFile, $vhostConf]);
+            $mvVhconfProc->run();
+
+            // 5. Re-add domain to listener (serving suspended page)
+            $proc = new Process(['sudo', 'sed', '-i',
+                "/listener Default{/a\\    map                      {$account->domain} {$account->domain}",
+                '/usr/local/lsws/conf/httpd_config.conf'
+            ]);
+            $proc->run();
+
+            // 6. Reload OLS
+            $proc = new Process(['sudo', '/usr/local/lsws/bin/lswsctrl', 'reload']);
             $proc->run();
         } catch (\Exception $e) {
             // Dev/WSL environment silent failover
@@ -265,8 +351,28 @@ class HostingAccountController extends Controller
         }
 
         try {
-            // Unlock OS user password using Symfony Process
+            // 1. Unlock OS user password
             $proc = new Process(['sudo', 'passwd', '-u', $account->system_username]);
+            $proc->run();
+
+            // 2. Restore vhconf from disabled backup
+            $vhostConf = "/usr/local/lsws/conf/vhosts/{$account->domain}/vhconf.conf";
+            $vhostConfDisabled = "/usr/local/lsws/conf/vhosts/{$account->domain}/vhconf.conf.disabled";
+
+            $checkProc = new Process(['sudo', 'test', '-f', $vhostConfDisabled]);
+            $checkProc->run();
+            if ($checkProc->isSuccessful()) {
+                $mvProc = new Process(['sudo', 'mv', $vhostConfDisabled, $vhostConf]);
+                $mvProc->run();
+            }
+
+            // 3. Remove suspended.html
+            $suspendedPath = "/home/{$account->system_username}/suspended.html";
+            $rmProc = new Process(['sudo', 'rm', '-f', $suspendedPath]);
+            $rmProc->run();
+
+            // 4. Reload OLS to apply restored vhost
+            $proc = new Process(['sudo', '/usr/local/lsws/bin/lswsctrl', 'reload']);
             $proc->run();
         } catch (\Exception $e) {
             // Dev/WSL environment silent failover
