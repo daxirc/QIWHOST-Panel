@@ -22,6 +22,7 @@ LOG_FILE="/var/log/qiwhost_install.log"
 CONFIG_FILE="/etc/qiwhost/install.conf"
 TOTAL_STEPS=20
 CURRENT_STEP=0
+export COMPOSER_ALLOW_SUPERUSER=1
 
 # Clean old log on brand-new run (but preserve config for idempotency)
 if [ ! -f "$CONFIG_FILE" ]; then
