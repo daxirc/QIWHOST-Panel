@@ -652,7 +652,7 @@ After=network.target
 Type=simple
 User=www-data
 WorkingDirectory=/opt/qiwhost/panel-frontend
-ExecStart=/usr/local/bin/node /opt/qiwhost/panel-frontend/node_modules/.bin/next start -p 3000
+ExecStart=/usr/bin/node /opt/qiwhost/panel-frontend/node_modules/.bin/next start -p 3000
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
