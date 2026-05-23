@@ -373,15 +373,6 @@ export default function AdminSettings() {
           <ShieldCheck className="w-4 h-4" />
           SSL Param
         </button>
-        <button
-          onClick={() => setActiveTab("server-info")}
-          className={`pb-3 text-sm border-b-2 transition-all flex items-center gap-2 ${
-            activeTab === "server-info" ? "border-primary text-primary" : "border-transparent text-gray-400 hover:text-gray-655"
-          }`}
-        >
-          <Server className="w-4 h-4" />
-          Diagnostics
-        </button>
       </div>
 
       {loading && !successMsg && !errorMsg ? (
@@ -389,93 +380,6 @@ export default function AdminSettings() {
           <Loader2 className="w-8 h-8 text-primary animate-spin" />
           <p className="text-sm font-medium text-gray-500 font-semibold">Loading configurations from DB...</p>
         </div>
-      ) : activeTab === "server-info" ? (
-        loadingServerInfo ? (
-          <div className="bg-white border border-gray-200 rounded-xl p-12 flex flex-col items-center justify-center space-y-4 max-w-3xl">
-            <Loader2 className="w-8 h-8 text-primary animate-spin" />
-            <p className="text-sm font-medium text-gray-500 font-semibold">Reading real-time system stats...</p>
-          </div>
-        ) : serverInfo ? (
-          <div className="space-y-6 max-w-3xl font-semibold text-sm">
-            {/* System hardware widgets */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-sm flex items-center space-x-4">
-                <div className="p-3 bg-blue-50 text-blue-500 rounded-xl">
-                  <Cpu className="w-6 h-6" />
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">CPU Average Load</p>
-                  <h3 className="text-xl font-bold text-gray-800">{serverInfo.cpu_usage}%</h3>
-                  <p className="text-xs text-gray-400 font-medium">Virtual Core load limits</p>
-                </div>
-              </div>
-
-              <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-sm flex items-center space-x-4">
-                <div className="p-3 bg-green-50 text-green-500 rounded-xl">
-                  <Activity className="w-6 h-6" />
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">RAM Allocation</p>
-                  <h3 className="text-xl font-bold text-gray-800">
-                    {serverInfo.ram_used_mb} MB / {serverInfo.ram_total_mb} MB
-                  </h3>
-                  <p className="text-xs text-gray-400 font-medium">
-                    {Math.round((serverInfo.ram_used_mb / serverInfo.ram_total_mb) * 100)}% allocated capacity
-                  </p>
-                </div>
-              </div>
-
-              <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-sm flex items-center space-x-4">
-                <div className="p-3 bg-purple-50 text-purple-500 rounded-xl">
-                  <HardDrive className="w-6 h-6" />
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Disk Storage</p>
-                  <h3 className="text-xl font-bold text-gray-800">
-                    {serverInfo.disk_used_gb} GB / {serverInfo.disk_total_gb} GB
-                  </h3>
-                  <p className="text-xs text-gray-400 font-medium">
-                    {Math.round((serverInfo.disk_used_gb / serverInfo.disk_total_gb) * 100)}% operational limits
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Software Environment Details */}
-            <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm space-y-4">
-              <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
-                <Server className="w-4 h-4 text-primary" />
-                Host System & Application Daemons
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm border-t border-gray-100 pt-4">
-                <div className="flex justify-between py-2 border-b border-gray-50">
-                  <span className="font-semibold text-gray-400">Server Hostname</span>
-                  <span className="font-mono text-gray-800 font-bold">{serverInfo.hostname}</span>
-                </div>
-                <div className="flex justify-between py-2 border-b border-gray-50">
-                  <span className="font-semibold text-gray-400">Main Server IP</span>
-                  <span className="font-mono text-gray-800 font-bold">{serverInfo.server_ip}</span>
-                </div>
-                <div className="flex justify-between py-2 border-b border-gray-50">
-                  <span className="font-semibold text-gray-400">Operating System</span>
-                  <span className="text-gray-800 font-bold">{serverInfo.os_version}</span>
-                </div>
-                <div className="flex justify-between py-2 border-b border-gray-50">
-                  <span className="font-semibold text-gray-400">Web Server Engine</span>
-                  <span className="text-gray-800 font-bold">{serverInfo.ols_version}</span>
-                </div>
-                <div className="flex justify-between py-2 border-b border-gray-50">
-                  <span className="font-semibold text-gray-400">MySQL Database Server</span>
-                  <span className="text-gray-800 font-bold">{serverInfo.mysql_version}</span>
-                </div>
-                <div className="flex justify-between py-2 border-b border-gray-50">
-                  <span className="font-semibold text-gray-400">PHP CLI Engine</span>
-                  <span className="text-gray-800 font-bold">Active: PHP {defaultPhpVersion}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : null
       ) : (
         /* Settings Forms */
         <form onSubmit={handleSubmit} className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm max-w-3xl space-y-6 font-semibold text-sm">
