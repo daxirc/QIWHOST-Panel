@@ -159,6 +159,16 @@ Route::middleware(['auth:sanctum', 'enforce.limits', 'rate.customer'])->prefix('
     Route::post('/files/create', [CustomerFileManagerController::class, 'createFileOrFolder']);
     Route::post('/files/upload', [CustomerFileManagerController::class, 'upload']);
     Route::delete('/files', [CustomerFileManagerController::class, 'delete']);
+    Route::get('/files/download', [CustomerFileManagerController::class, 'download']);
+    Route::post('/files/download-zip', [CustomerFileManagerController::class, 'downloadZip']);
+    Route::post('/files/compress', [CustomerFileManagerController::class, 'compress']);
+    Route::post('/files/extract', [CustomerFileManagerController::class, 'extract']);
+    Route::post('/files/rename', [CustomerFileManagerController::class, 'rename']);
+    Route::post('/files/move', [CustomerFileManagerController::class, 'move']);
+    Route::post('/files/copy', [CustomerFileManagerController::class, 'copy']);
+    Route::post('/files/chmod', [CustomerFileManagerController::class, 'chmod']);
+    Route::get('/files/search', [CustomerFileManagerController::class, 'search']);
+    Route::get('/files/size', [CustomerFileManagerController::class, 'getSize']);
     
     // Customer PHP Manager Routes
     Route::get('/php/config', [CustomerPhpManagerController::class, 'getConfig']);
