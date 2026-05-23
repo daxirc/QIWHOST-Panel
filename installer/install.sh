@@ -668,11 +668,11 @@ After=network.target
 Type=simple
 User=www-data
 WorkingDirectory=/opt/qiwhost/panel-frontend
-ExecStart=/usr/bin/node /opt/qiwhost/panel-frontend/node_modules/.bin/next start -p 3000
+ExecStart=/usr/bin/node /opt/qiwhost/panel-frontend/node_modules/.bin/next start -p 8443
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
-Environment=PORT=3000
+Environment=PORT=8443
 Environment=NEXT_TELEMETRY_DISABLED=1
 
 [Install]
@@ -702,7 +702,7 @@ run_cmd "ufw default allow outgoing" "Setting default outgoing traffic to ALLOW"
 run_cmd "ufw allow 22/tcp comment 'SSH'" "Opening SSH Port (22)"
 run_cmd "ufw allow 80/tcp comment 'HTTP'" "Opening HTTP Port (80)"
 run_cmd "ufw allow 443/tcp comment 'HTTPS'" "Opening HTTPS Port (443)"
-run_cmd "ufw allow 3000/tcp comment 'QIWHOST Frontend'" "Opening Frontend Service Port (3000)"
+run_cmd "ufw allow 8443/tcp comment 'QIWHOST Frontend'" "Opening Frontend Service Port (8443)"
 run_cmd "ufw allow 8080/tcp comment 'QIWHOST API'" "Opening Backend API Port (8080)"
 
 # Mail Ports permissions
@@ -746,7 +746,7 @@ PANEL_DB_PASSWORD=$PANEL_DB_PASS
 
 ROUNDCUBE_DB_PASSWORD=$ROUNDCUBE_DB_PASS
 
-PANEL_FRONTEND_URL=http://$SERVER_HOSTNAME:3000
+PANEL_FRONTEND_URL=http://$SERVER_HOSTNAME:8443
 PANEL_API_URL=http://$SERVER_HOSTNAME:8080
 WEBMAIL_URL=http://$SERVER_HOSTNAME/webmail
 EOF
@@ -786,7 +786,7 @@ echo -e "${CYAN}╔════════════════════�
 echo -e "${CYAN}║            QIWHOST Panel Installation Complete!              ║${NC}"
 echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
 echo -e "${CYAN}║                                                              ║${NC}"
-echo -e "${CYAN}║  Panel URL:      ${YELLOW}http://$SERVER_HOSTNAME:3000${CYAN}               ║${NC}"
+echo -e "${CYAN}║  Panel URL:      ${YELLOW}http://$SERVER_HOSTNAME:8443${CYAN}               ║${NC}"
 echo -e "${CYAN}║  Panel API:      ${YELLOW}http://$SERVER_HOSTNAME:8080${CYAN}               ║${NC}"
 echo -e "${CYAN}║  Webmail:        ${YELLOW}http://$SERVER_HOSTNAME/webmail${CYAN}            ║${NC}"
 echo -e "${CYAN}║  phpMyAdmin:     ${YELLOW}http://$SERVER_HOSTNAME/phpmyadmin${CYAN}         ║${NC}"

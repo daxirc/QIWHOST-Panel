@@ -52,7 +52,7 @@ The installer deploys a robust, production-grade enterprise hosting stack:
 
 Upon successful installation, access URLs and initial credentials will be displayed in the terminal:
 
-* **Control Panel Portal**: `http://<your-server-hostname>:3000` (Redirects to `/customer/login` or `/login`)
+* **Control Panel Portal**: `http://<your-server-hostname>:8443` (Redirects to `/customer/login` or `/login`)
 * **Control Panel API**: `http://<your-server-hostname>:8080`
 * **Webmail Portal**: `http://<your-server-hostname>/webmail`
 * **phpMyAdmin Portal**: `http://<your-server-hostname>/phpmyadmin`
@@ -117,6 +117,6 @@ ufw status verbose
 ```
 If necessary, re-allow panel ports:
 ```bash
-ufw allow 3000/tcp comment 'QIWHOST Frontend'
+ufw allow 8443/tcp comment 'QIWHOST Frontend'
 ufw allow 8080/tcp comment 'QIWHOST API'
 ```
