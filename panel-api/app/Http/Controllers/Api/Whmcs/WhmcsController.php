@@ -189,10 +189,18 @@ class WhmcsController extends Controller
             'created_at'  => now()->timestamp,
         ], now()->addSeconds(60)); // 60 seconds only
 
-        // Frontend URL (port 8443)
-        $serverIp = @file_get_contents('/etc/qiwhost/server_ip') 
-            ?? gethostbyname(gethostname());
-        $frontendUrl = "http://" . trim($serverIp) . ":8443";
+        // Resolve secure frontend URL dynamically
+        $frontendUrl = env('FRONTEND_URL');
+        if (empty($frontendUrl)) {
+            $host = 'node1.qiwhost.com';
+            if (file_exists('/etc/hostname')) {
+                $sysHost = trim(file_get_contents('/etc/hostname'));
+                if (!empty($sysHost)) {
+                    $host = $sysHost;
+                }
+            }
+            $frontendUrl = "https://" . $host . ":8443";
+        }
 
         return response()->json([
             'success' => true,
