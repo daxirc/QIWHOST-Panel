@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AdminAPI as API } from "@/lib/api";
 import { 
@@ -25,15 +25,13 @@ export default function AdminWebmail() {
   const [activeTab, setActiveTab] = useState<"telemetry" | "config" | "test" | "plugins">("telemetry");
   const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
-  const getWebmailUrl = () => {
-    if (typeof window !== "undefined") {
-      return `http://${window.location.hostname}:8025`;
-    }
-    const host = process.env.NEXT_PUBLIC_SERVER_IP || "127.0.0.1";
-    return `http://${host}:8025`;
-  };
+  const [webmailUrl, setWebmailUrl] = useState("http://127.0.0.1:8025");
 
-  const webmailUrl = getWebmailUrl();
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setWebmailUrl(`http://${window.location.hostname}:8025`);
+    }
+  }, []);
 
   // Connection Test Form State
   const [testImapHost, setTestImapHost] = useState("localhost");

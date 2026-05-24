@@ -518,6 +518,9 @@ EOF
 # Perform Sed replacement
 run_cmd "sed -i 's/ROUNDCUBE_DB_PASS_PLACEHOLDER/'\"$ROUNDCUBE_DB_PASS\"'/g' /etc/roundcube/config.inc.php" "Injecting Roundcube database credentials"
 run_cmd "sed -i 's/DES_KEY_PLACEHOLDER/'\"$(openssl rand -base64 24 | tr -d '=+/' | cut -c1-24)\"'/g' /etc/roundcube/config.inc.php" "Injecting Roundcube encryption DES key"
+run_cmd "chown root:www-data /etc/roundcube/config.inc.php" "Setting ownership of Roundcube config to root:www-data"
+run_cmd "chmod 660 /etc/roundcube/config.inc.php" "Setting permissions of Roundcube config to 660"
+
 
 # Create roundcube webmail service
 log_info "Configuring Roundcube webmail service..."

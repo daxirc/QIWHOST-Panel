@@ -110,6 +110,67 @@ class WebmailController extends Controller
             );
         }
 
+        // Sync settings to /etc/roundcube/config.inc.php dynamically
+        $configPath = '/etc/roundcube/config.inc.php';
+        if (file_exists($configPath) && is_writable($configPath)) {
+            $config = [];
+            include $configPath; // Load current config array into $config
+
+            // Update fields with user input, preserving any other keys
+            $config['default_host'] = $input['imap_host'] ?? ($config['default_host'] ?? 'localhost');
+            $config['default_port'] = isset($input['imap_port']) ? (int)$input['imap_port'] : ($config['default_port'] ?? 143);
+            $config['smtp_server'] = $input['smtp_host'] ?? ($config['smtp_server'] ?? 'localhost');
+            $config['smtp_port'] = isset($input['smtp_port']) ? (int)$input['smtp_port'] : ($config['smtp_port'] ?? 587);
+            $config['product_name'] = $input['product_name'] ?? ($config['product_name'] ?? 'QIWHOST Webmail');
+            $config['language'] = $input['default_language'] ?? ($config['language'] ?? 'en_US');
+
+            // Map plugins list dynamically
+            $plugins = [];
+            if (!empty($input['plugin_archive'])) {
+                $plugins[] = 'archive';
+            }
+            if (!empty($input['plugin_zipdownload'])) {
+                $plugins[] = 'zipdownload';
+            }
+            if (!empty($input['plugin_password'])) {
+                $plugins[] = 'password';
+            }
+            if (!empty($input['plugin_managesieve'])) {
+                $plugins[] = 'managesieve';
+            }
+            if (!empty($input['plugin_carddav'])) {
+                $plugins[] = 'carddav';
+            }
+
+            // Fallback default plugins if empty
+            if (empty($plugins)) {
+                $plugins = ['archive', 'zipdownload', 'password'];
+            }
+            $config['plugins'] = $plugins;
+
+            // Build new configuration contents
+            $content = "<?php\n";
+            foreach ($config as $k => $v) {
+                if (is_array($v)) {
+                    if (empty($v)) {
+                        $content .= "\$config['{$k}'] = [];\n";
+                    } else {
+                        $escapedArray = array_map('addslashes', $v);
+                        $content .= "\$config['{$k}'] = ['" . implode("', '", $escapedArray) . "'];\n";
+                    }
+                } elseif (is_int($v) || is_float($v)) {
+                    $content .= "\$config['{$k}'] = {$v};\n";
+                } elseif (is_bool($v)) {
+                    $content .= "\$config['{$k}'] = " . ($v ? 'true' : 'false') . ";\n";
+                } else {
+                    $escaped = addslashes($v);
+                    $content .= "\$config['{$k}'] = '{$escaped}';\n";
+                }
+            }
+
+            @file_put_contents($configPath, $content);
+        }
+
         return $this->getConfig();
     }
 
