@@ -15,7 +15,15 @@ export default function CustomerWebmail() {
   const [emails, setEmails] = useState<EmailAccount[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const webmailUrl = `http://${process.env.NEXT_PUBLIC_SERVER_IP || (typeof window !== "undefined" ? window.location.hostname : "")}:8025`;
+  const getWebmailUrl = () => {
+    if (typeof window !== "undefined") {
+      return `http://${window.location.hostname}:8025`;
+    }
+    const host = process.env.NEXT_PUBLIC_SERVER_IP || "127.0.0.1";
+    return `http://${host}:8025`;
+  };
+
+  const webmailUrl = getWebmailUrl();
 
   const fetchEmails = async () => {
     try {
