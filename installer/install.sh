@@ -389,34 +389,37 @@ EOF
 run_cmd "sed -i 's/ROUNDCUBE_DB_PASS_PLACEHOLDER/'\"$ROUNDCUBE_DB_PASS\"'/g' /etc/roundcube/config.inc.php" "Injecting Roundcube database credentials"
 run_cmd "sed -i 's/DES_KEY_PLACEHOLDER/'\"$(openssl rand -base64 24 | tr -d '=+/' | cut -c1-24)\"'/g' /etc/roundcube/config.inc.php" "Injecting Roundcube encryption DES key"
 
-# FIX 4 - Create proper OLS virtual host for Roundcube (/webmail)
-run_cmd "mkdir -p /usr/local/lsws/conf/vhosts/webmail" "Creating Roundcube virtual host directory"
-cat > /usr/local/lsws/conf/vhosts/webmail/vhconf.conf << EOF
-docRoot /var/lib/roundcube/
-vhDomain $SERVER_HOSTNAME
-enableGzip 1
-index {
-  useServer 0
-  indexFiles index.php
-}
-scripthandler {
-  add lsapi:lsphp83 php
-}
-rewrite {
-  enable 1
-  autoLoadHtaccess 1
-}
+# Create roundcube webmail service
+log_info "Configuring Roundcube webmail service..."
+
+cat > /etc/systemd/system/roundcube-webmail.service << EOF
+[Unit]
+Description=Roundcube Webmail PHP Server
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/var/lib/roundcube
+ExecStart=/usr/bin/php8.3 -S 0.0.0.0:8025 -t /var/lib/roundcube
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/roundcube_php.log
+StandardError=append:/var/log/roundcube_php.log
+
+[Install]
+WantedBy=multi-user.target
 EOF
 
-# Register webmail in httpd_config.conf as proper virtualhost block
-vhostRegister="\nvirtualhost webmail {\n  vhRoot                  /var/lib/roundcube/\n  configFile              conf/vhosts/webmail/vhconf.conf\n  allowSymbolLink         1\n  enableScript            1\n  restrained              1\n}\n"
-run_cmd "echo -e \"\$vhostRegister\" >> /usr/local/lsws/conf/httpd_config.conf" "Registering webmail virtual host in OLS config"
+chown -R www-data:www-data /var/lib/roundcube
+run_cmd "systemctl daemon-reload" "Reloading systemd"
+run_cmd "systemctl enable roundcube-webmail" "Enabling roundcube service"
+run_cmd "systemctl start roundcube-webmail" "Starting roundcube service"
+run_cmd "ufw allow 8025/tcp comment 'Roundcube Webmail'" "Opening webmail port 8025"
+log_success "Roundcube webmail configured on port 8025"
 
-# Map in Default listener as: map webmail webmail
-run_cmd "sed -i '/listener Default{/a\\    map                      webmail webmail' /usr/local/lsws/conf/httpd_config.conf" "Mapping webmail in Default listener"
-
-# Add global context mapping to default Example vhost
-run_cmd "echo -e '\ncontext /webmail/ {\n  location                /var/lib/roundcube/\n  allowBrowse             1\n}\n\ncontext /phpmyadmin/ {\n  location                /usr/share/phpmyadmin/\n  allowBrowse             1\n}' >> /usr/local/lsws/conf/vhosts/Example/vhconf.conf" "Mapping webmail and phpmyadmin contexts to default OLS Example vhost"
+# Add phpMyAdmin context mapping to default Example vhost
+run_cmd "echo -e '\ncontext /phpmyadmin/ {\n  location                /usr/share/phpmyadmin/\n  allowBrowse             1\n}' >> /usr/local/lsws/conf/vhosts/Example/vhconf.conf" "Mapping phpmyadmin context to default OLS Example vhost"
 
 # ==============================================================================
 # STEP 11: Install phpMyAdmin
@@ -446,27 +449,29 @@ EOF
 chmod 644 /var/www/html/phpmyadmin-sso.php
 log_success "phpMyAdmin SSO Script configured."
 
-# FIX 4 - Create proper OLS virtual host for phpMyAdmin
-run_cmd "mkdir -p /usr/local/lsws/conf/vhosts/phpmyadmin" "Creating phpMyAdmin virtual host directory"
-cat > /usr/local/lsws/conf/vhosts/phpmyadmin/vhconf.conf << EOF
+# Add phpMyAdmin as alias in OLS
+mkdir -p /usr/local/lsws/conf/vhosts/phpmyadmin
+cat > /usr/local/lsws/conf/vhosts/phpmyadmin/vhconf.conf << 'EOF'
 docRoot /usr/share/phpmyadmin/
-vhDomain $SERVER_HOSTNAME
+vhDomain phpmyadmin
 enableGzip 1
+
 index {
   useServer 0
   indexFiles index.php
 }
+
 scripthandler {
-  add lsapi:lsphp83 php
+  add lsapi:lsphp php
+}
+
+accessControl {
+  allow *
 }
 EOF
 
-# Register phpmyadmin in httpd_config.conf as proper virtualhost block
-pmaRegister="\nvirtualhost phpmyadmin {\n  vhRoot                  /usr/share/phpmyadmin/\n  configFile              conf/vhosts/phpmyadmin/vhconf.conf\n  allowSymbolLink         1\n  enableScript            1\n  restrained              1\n}\n"
+pmaRegister="\nvirtualhost phpmyadmin {\n  vhRoot                  /usr/share/phpmyadmin/\n  configFile              conf/vhosts/phpmyadmin/vhconf.conf\n  allowSymbolLink         1\n  enableScript            1\n  restrained              0\n  setUIDMode              0\n}\n"
 run_cmd "echo -e \"\$pmaRegister\" >> /usr/local/lsws/conf/httpd_config.conf" "Registering phpMyAdmin virtual host in OLS config"
-
-# Map in Default listener as: map phpmyadmin phpmyadmin
-run_cmd "sed -i '/listener Default{/a\\    map                      phpmyadmin phpmyadmin' /usr/local/lsws/conf/httpd_config.conf" "Mapping phpMyAdmin in Default listener"
 
 # Restart OpenLiteSpeed Server to load Virtual Hosts configurations
 run_cmd "systemctl restart $OLS_SERVICE" "Restarting OpenLiteSpeed Server"
@@ -704,6 +709,7 @@ run_cmd "ufw allow 80/tcp comment 'HTTP'" "Opening HTTP Port (80)"
 run_cmd "ufw allow 443/tcp comment 'HTTPS'" "Opening HTTPS Port (443)"
 run_cmd "ufw allow 8443/tcp comment 'QIWHOST Frontend'" "Opening Frontend Service Port (8443)"
 run_cmd "ufw allow 8080/tcp comment 'QIWHOST API'" "Opening Backend API Port (8080)"
+run_cmd "ufw allow 8025/tcp comment 'Roundcube Webmail'" "Opening Webmail Port (8025)"
 
 # Mail Ports permissions
 run_cmd "ufw allow 25/tcp comment 'SMTP'" "Opening SMTP Port (25)"
@@ -751,7 +757,7 @@ ROUNDCUBE_DB_PASSWORD=$ROUNDCUBE_DB_PASS
 
 PANEL_FRONTEND_URL=http://$SERVER_HOSTNAME:8443
 PANEL_API_URL=http://$SERVER_HOSTNAME:8080
-WEBMAIL_URL=http://$SERVER_HOSTNAME/webmail
+WEBMAIL_URL=http://$SERVER_HOSTNAME:8025
 WHMCS_SECRET_KEY=$WHMCS_SECRET
 EOF
 
@@ -784,6 +790,7 @@ check_service opendkim
 check_service qiwhost-api
 check_service qiwhost-frontend
 check_service qiwhost-queue
+check_service roundcube-webmail
 
 echo -e "\n"
 echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
@@ -792,7 +799,7 @@ echo -e "${CYAN}╠════════════════════�
 echo -e "${CYAN}║                                                              ║${NC}"
 echo -e "${CYAN}║  Panel URL:      ${YELLOW}http://$SERVER_HOSTNAME:8443${CYAN}               ║${NC}"
 echo -e "${CYAN}║  Panel API:      ${YELLOW}http://$SERVER_HOSTNAME:8080${CYAN}               ║${NC}"
-echo -e "${CYAN}║  Webmail:        ${YELLOW}http://$SERVER_HOSTNAME/webmail${CYAN}            ║${NC}"
+echo -e "${CYAN}║  Webmail:        ${YELLOW}http://$SERVER_HOSTNAME:8025${CYAN}               ║${NC}"
 echo -e "${CYAN}║  phpMyAdmin:     ${YELLOW}http://$SERVER_HOSTNAME/phpmyadmin${CYAN}         ║${NC}"
 echo -e "${CYAN}║                                                              ║${NC}"
 echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"

@@ -11,26 +11,61 @@ class WebmailController extends Controller
 {
     public function getStatus()
     {
-        $installed = file_exists('/usr/share/roundcube/index.php') || 
-                     file_exists('/var/lib/roundcube/index.php') ||
-                     file_exists('/usr/local/lsws/roundcube/index.php');
-        
-        $version = 'Roundcube Webmail 1.6.6'; // Seeded version status
-        
-        // Grab smtp settings from global settings table
-        $smtpHost = Setting::where('key', 'smtp_host')->value('value') ?? 'localhost';
-        $smtpPort = Setting::where('key', 'smtp_port')->value('value') ?? '587';
-        
-        return $this->successResponse([
-            'installed' => $installed || env('APP_ENV') === 'local',
-            'version' => $version,
-            'path' => '/webmail',
-            'imap_server' => 'localhost',
-            'imap_port' => 993,
-            'smtp_server' => $smtpHost, 
-            'smtp_port' => (int)$smtpPort,
-            'url' => '/webmail'
-        ], 'Webmail status loaded.');
+        // Check multiple possible Roundcube paths
+        $roundcubePaths = [
+            '/var/lib/roundcube',
+            '/usr/share/roundcube',
+            '/var/www/roundcube',
+        ];
+
+        $installed = false;
+        $path = '';
+        foreach ($roundcubePaths as $p) {
+            if (is_dir($p) && file_exists($p . '/index.php')) {
+                $installed = true;
+                $path = $p;
+                break;
+            }
+        }
+
+        // Check if roundcube service is running
+        $serviceRunning = false;
+        $process = new Process(['systemctl', 'is-active', 'roundcube-webmail']);
+        $process->run();
+        $serviceRunning = trim($process->getOutput()) === 'active';
+
+        // Get roundcube version
+        $version = 'Unknown';
+        $composerFile = $path . '/composer.json';
+        if (file_exists($composerFile)) {
+            $composer = json_decode(file_get_contents($composerFile), true);
+            $version = $composer['version'] ?? 'Unknown';
+        }
+
+        // Dev environment bypass/override
+        if (env('APP_ENV') === 'local') {
+            $installed = true;
+            $serviceRunning = true;
+            $version = '1.6.6';
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'installed'      => $installed && $serviceRunning,
+                'path'           => $path,
+                'version'        => $version,
+                'port'           => 8025,
+                'proxy_path'     => '/webmail',
+                'service_status' => $serviceRunning ? 'active' : 'inactive',
+                'smtp_host'      => 'localhost',
+                'smtp_server'    => 'localhost',
+                'smtp_port'      => 587,
+                'imap_host'      => 'localhost',
+                'imap_server'    => 'localhost',
+                'imap_port'      => 143,
+            ]
+        ]);
     }
 
     public function getConfig()

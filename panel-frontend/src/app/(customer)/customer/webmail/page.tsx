@@ -15,6 +15,8 @@ export default function CustomerWebmail() {
   const [emails, setEmails] = useState<EmailAccount[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const webmailUrl = `http://${process.env.NEXT_PUBLIC_SERVER_IP || (typeof window !== "undefined" ? window.location.hostname : "")}:8025`;
+
   const fetchEmails = async () => {
     try {
       const res = await API.get("/customer/emails");
@@ -58,7 +60,7 @@ export default function CustomerWebmail() {
         </div>
         <div>
           <a
-            href={typeof window !== "undefined" ? "http://" + window.location.hostname + "/webmail" : "#"}
+            href={webmailUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="bg-primary hover:bg-primary-hover text-white text-xs font-bold px-4 py-2.5 rounded-lg shadow-md inline-flex items-center gap-1.5 transition-all w-full md:w-auto"
@@ -104,7 +106,7 @@ export default function CustomerWebmail() {
                     </td>
                     <td className="px-6 py-4 text-right">
                       <a
-                        href={typeof window !== "undefined" ? "http://" + window.location.hostname + "/webmail" : "#"}
+                        href={webmailUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-primary hover:underline text-xs font-bold flex items-center justify-end gap-1"

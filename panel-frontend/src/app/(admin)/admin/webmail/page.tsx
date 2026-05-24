@@ -25,6 +25,9 @@ export default function AdminWebmail() {
   const [activeTab, setActiveTab] = useState<"telemetry" | "config" | "test" | "plugins">("telemetry");
   const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
+  const serverIp = process.env.NEXT_PUBLIC_SERVER_IP || (typeof window !== "undefined" ? window.location.hostname : "");
+  const webmailUrl = `http://${serverIp}:8025`;
+
   // Connection Test Form State
   const [testImapHost, setTestImapHost] = useState("localhost");
   const [testImapPort, setTestImapPort] = useState(993);
@@ -167,7 +170,7 @@ export default function AdminWebmail() {
         </div>
         {statusRes?.installed && (
           <a
-            href={statusRes.url || (typeof window !== "undefined" ? "http://" + window.location.hostname + "/webmail" : "#")}
+            href={webmailUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="bg-primary hover:bg-primary-hover text-white px-4 py-2.5 rounded-lg font-semibold shadow-md flex items-center justify-center gap-2 transition-all text-sm"
