@@ -10,12 +10,15 @@ function SsoCallbackInner() {
     useEffect(() => {
         const token = params.get("token");
         const email = params.get("email");
+        const name = params.get("name") || "Session User";
 
         if (token && email) {
-            // Store customer token
+            const user = { name, email };
+            // Store customer token and user details
             localStorage.setItem("qiw_customer_token", token);
-            localStorage.setItem("qiw_customer_user", JSON.stringify({ email }));
+            localStorage.setItem("qiw_customer_user", JSON.stringify(user));
             localStorage.setItem("qiw_user_role", "customer");
+            localStorage.setItem("qiw_user_data", JSON.stringify(user));
             
             // Redirect to dashboard
             router.replace("/customer/dashboard");
