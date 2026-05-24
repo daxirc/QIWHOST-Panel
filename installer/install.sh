@@ -272,10 +272,12 @@ context / {
   addDefaultCharset       off
 }
 
-context /webmail/ {
-  type                    proxy
-  handler                 RoundcubeWebmail
-  addDefaultCharset       off
+rewrite  {
+  enable                  1
+  rules                   <<<END_rules
+RewriteEngine On
+RewriteRule ^/webmail/(.*)$ http://RoundcubeWebmail/$1 [P,L]
+  END_rules
 }
 EOF
 
