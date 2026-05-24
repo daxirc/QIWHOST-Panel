@@ -291,6 +291,9 @@ www-data ALL=(ALL) NOPASSWD: /bin/chown * /home/*
 www-data ALL=(ALL) NOPASSWD: /bin/chmod * /home/*
 www-data ALL=(ALL) NOPASSWD: /bin/mv /tmp/vhconf_* /usr/local/lsws/conf/vhosts/*
 www-data ALL=(ALL) NOPASSWD: /bin/rm /home/*/suspended.html
+www-data ALL=(ALL) NOPASSWD: /bin/cat /usr/local/lsws/conf/httpd_config.conf
+www-data ALL=(ALL) NOPASSWD: /bin/mv /tmp/httpd_ssl_update.conf /usr/local/lsws/conf/httpd_config.conf
+www-data ALL=(ALL) NOPASSWD: /bin/mv /tmp/hosts_update /etc/hosts
 
 # OLS control
 www-data ALL=(ALL) NOPASSWD: /usr/local/lsws/bin/lswsctrl reload

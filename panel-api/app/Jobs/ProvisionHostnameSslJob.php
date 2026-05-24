@@ -90,7 +90,9 @@ class ProvisionHostnameSslJob implements ShouldQueue
         $certPath = "/etc/letsencrypt/live/{$this->hostname}";
         $olsConf = '/usr/local/lsws/conf/httpd_config.conf';
 
-        $config = file_get_contents($olsConf);
+        $cat = new Process(['sudo', 'cat', $olsConf]);
+        $cat->run();
+        $config = $cat->getOutput();
         // Remove old PanelFrontend listener
         $config = preg_replace('/\nlistener PanelFrontend \{[^}]*\}/', '', $config);
 
