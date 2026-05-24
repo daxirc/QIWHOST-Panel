@@ -45,14 +45,28 @@ class FileManagerController extends Controller
             }
             $canonicalizedPath = $jailRoot . '/' . implode('/', $resolvedParts);
             
-            if (strpos($canonicalizedPath, $jailRoot) !== 0) {
-                throw new \InvalidArgumentException("Access Denied: Path traversal detected.");
+            // Add trailing slash to prevent prefix-based bypass
+            $jailRootNormalized = rtrim($jailRoot, '/') . '/';
+            $canonicalizedPathNormalized = rtrim($canonicalizedPath, '/') . '/';
+
+            if (
+                strpos($canonicalizedPathNormalized, $jailRootNormalized) !== 0
+                && rtrim($canonicalizedPath, '/') !== rtrim($jailRoot, '/')
+            ) {
+                throw new \InvalidArgumentException("Access Denied: Path traversal attempt detected.");
             }
             return $canonicalizedPath;
         }
 
-        if (strpos($realPath, $jailRoot) !== 0) {
-            throw new \InvalidArgumentException("Access Denied: Path traversal detected.");
+        // Add trailing slash to prevent prefix-based bypass
+        $jailRootNormalized = rtrim($jailRoot, '/') . '/';
+        $realPathNormalized  = rtrim($realPath, '/') . '/';
+
+        if (
+            strpos($realPathNormalized, $jailRootNormalized) !== 0
+            && rtrim($realPath, '/') !== rtrim($jailRoot, '/')
+        ) {
+            throw new \InvalidArgumentException("Access Denied: Path traversal attempt detected.");
         }
 
         return $realPath;

@@ -94,7 +94,7 @@ class DatabaseController extends Controller
         DatabaseUser::create([
             'hosting_account_id' => $validated['hosting_account_id'],
             'username' => $validated['database_username'],
-            'password_encrypted' => Hash::make($validated['database_password']),
+            'password_encrypted' => $validated['database_password'], // auto-encrypted via cast
             'host' => 'localhost',
         ]);
 
@@ -165,7 +165,7 @@ class DatabaseController extends Controller
         $user = DatabaseUser::create([
             'hosting_account_id' => $db->hosting_account_id,
             'username' => $validated['username'],
-            'password_encrypted' => Hash::make($validated['password']),
+            'password_encrypted' => $validated['password'], // auto-encrypted via cast
             'host' => 'localhost',
         ]);
 
@@ -211,7 +211,7 @@ class DatabaseController extends Controller
         } catch (\Exception $e) {}
 
         $user->update([
-            'password_encrypted' => Hash::make($validated['password'])
+            'password_encrypted' => $validated['password'] // auto-encrypted via cast
         ]);
 
         return $this->successResponse(null, 'Database user password updated successfully.');

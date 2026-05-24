@@ -197,11 +197,14 @@ class DatabaseController extends Controller
             $dbUser = DatabaseUser::where('hosting_account_id', $account->id)->first();
             $username = $dbUser ? ($account->system_username . '_' . $dbUser->username) : $account->system_username;
             
+            // Use the database user's actual stored password
+            $password = $dbUser ? $dbUser->password_encrypted : 'ali12345';
+            
             // Generate a secure token and cache it for 60 seconds
             $token = bin2hex(random_bytes(16));
             Cache::put('pma_sso_' . $token, [
                 'username' => $username,
-                'password' => 'ali12345' // seeded password in dev
+                'password' => $password
             ], 60);
 
             // SSO Redirect URL linking to the public proxy handler
@@ -221,24 +224,38 @@ class DatabaseController extends Controller
         try {
             $account = $this->getHostingAccount($request);
             $validated = $request->validate([
-                'allowed_ip' => 'required|string'
+                'allowed_ip' => ['required', 'string', function($attr, $value, $fail) {
+                    // Allow: valid IPv4, valid IPv6, or '%' (any host)
+                    if ($value === '%') return; // allow wildcard
+                    if (filter_var($value, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) return;
+                    if (filter_var($value, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) return;
+                    $fail('The allowed IP must be a valid IPv4, IPv6 address, or % for any host.');
+                }],
             ]);
 
-            $ip = $validated['allowed_ip'];
+            // Use separate PDO connection for MySQL admin operations
+            $pdo = new \PDO(
+                "mysql:host=127.0.0.1;port=3306",
+                "root",
+                config('database.connections.mysql.password')
+            );
+            $pdo->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
 
             // Query DB users and map remote hosts
             $dbUsers = DatabaseUser::where('hosting_account_id', $account->id)->get();
             foreach ($dbUsers as $user) {
-                $fullUser = $account->system_username . '_' . $user->username;
                 try {
-                    $sql = "CREATE USER IF NOT EXISTS '{$fullUser}'@'{$ip}' IDENTIFIED BY 'ali12345'; " .
-                           "GRANT ALL PRIVILEGES ON `{$account->system_username}\_%`.* TO '{$fullUser}'@'{$ip}'; " .
-                           "FLUSH PRIVILEGES;";
-                    $this->runMysql($sql);
+                    $safeName = str_replace(['`', "'", '"', '\\', "\0"], '', $account->system_username . '_' . $user->username);
+                    $safeIp   = $validated['allowed_ip']; // already validated as real IP or %
+                    $safePass = $user->password_encrypted; // decrypted from DB via casts
+
+                    $pdo->exec("CREATE USER IF NOT EXISTS `{$safeName}`@'{$safeIp}' IDENTIFIED BY " . $pdo->quote($safePass));
+                    $pdo->exec("GRANT ALL PRIVILEGES ON `{$account->system_username}\\_%`.* TO `{$safeName}`@'{$safeIp}'");
+                    $pdo->exec("FLUSH PRIVILEGES");
                 } catch (\Exception $e) {}
             }
 
-            return $this->successResponse(null, "Remote MySQL authorization granted for IP: {$ip}.");
+            return $this->successResponse(null, "Remote MySQL authorization granted for IP: {$validated['allowed_ip']}.");
 
         } catch (\Exception $e) {
             return $this->errorResponse($e->getMessage());

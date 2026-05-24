@@ -23,6 +23,10 @@ class DatabaseUser extends Model
         'password_encrypted',
     ];
 
+    protected $casts = [
+        'password_encrypted' => 'encrypted',
+    ];
+
     public function hostingAccount(): BelongsTo
     {
         return $this->belongsTo(HostingAccount::class);

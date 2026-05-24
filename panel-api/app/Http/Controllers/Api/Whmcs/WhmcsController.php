@@ -162,40 +162,45 @@ class WhmcsController extends Controller
      */
     public function sso(Request $request)
     {
+        $request->validate([
+            'username' => 'required|string|alpha_dash|max:32',
+        ]);
+
+        // Find account - must be active
         $account = HostingAccount::where('system_username', $request->username)
+            ->where('status', 'active') // only active accounts
             ->with('customer')
             ->first();
 
         if (!$account || !$account->customer) {
-            if ($request->expectsJson()) {
-                return response()->json(['success' => false, 'message' => 'Account not found'], 404);
-            }
-            return response('Account not found', 404);
+            return response()->json([
+                'success' => false,
+                'message' => 'Account not found or suspended'
+            ], 404);
         }
 
-        // Generate one-time token valid for 60 seconds
-        $token = Str::random(64);
+        // Generate cryptographically secure one-time token
+        $token = bin2hex(random_bytes(32)); // 64 char hex, more secure than Str::random
+        
         Cache::put("whmcs_sso_{$token}", [
             'customer_id' => $account->customer->id,
             'email'       => $account->customer->email,
             'username'    => $request->username,
-        ], now()->addSeconds(60));
+            'created_at'  => now()->timestamp,
+        ], now()->addSeconds(60)); // 60 seconds only
 
-        $ssoRedirectUrl = route('whmcs.sso.redirect', ['token' => $token]);
+        // Frontend URL (port 8443)
+        $serverIp = @file_get_contents('/etc/qiwhost/server_ip') 
+            ?? gethostbyname(gethostname());
+        $frontendUrl = "http://" . trim($serverIp) . ":8443";
 
-        // If it's an API call (e.g. WHMCS backend calling qiwhost_ServiceSingleSignOn)
-        if ($request->expectsJson() || $request->header('X-WHMCS-Token')) {
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'redirect_url' => $ssoRedirectUrl,
-                    'expires_in'   => 60,
-                ]
-            ]);
-        }
-
-        // Direct browser form POST redirect:
-        return redirect()->to($ssoRedirectUrl);
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'redirect_url' => $frontendUrl . '/sso?token=' . $token,
+                'expires_in'   => 60,
+            ]
+        ]);
     }
 
     /**
@@ -204,32 +209,38 @@ class WhmcsController extends Controller
     public function ssoRedirect(Request $request)
     {
         $token = $request->query('token');
-        $panelUrl = config('app.url');
-        // Use port 8443 for frontend
-        $frontendUrl = str_replace(':8080', ':8443', $panelUrl);
-
-        if (!$token) {
-            return redirect($frontendUrl . '/customer/login')->with('error', 'Invalid SSO token');
+        
+        // Validate token format (must be 64 char hex)
+        if (!$token || !preg_match('/^[a-f0-9]{64}$/', $token)) {
+            return redirect('/customer/login')->with('error', 'Invalid SSO token format');
         }
 
         $ssoData = Cache::get("whmcs_sso_{$token}");
         if (!$ssoData) {
-            return redirect($frontendUrl . '/customer/login')->with('error', 'SSO token expired or invalid');
+            return redirect('/customer/login')->with('error', 'SSO token expired or already used');
         }
 
-        // Delete token (one-time use)
+        // One-time use: delete immediately
         Cache::forget("whmcs_sso_{$token}");
+
+        // Validate token age (extra safety)
+        if (now()->timestamp - $ssoData['created_at'] > 60) {
+            return redirect('/customer/login')->with('error', 'SSO token expired');
+        }
 
         $customer = Customer::find($ssoData['customer_id']);
         if (!$customer) {
-            return redirect($frontendUrl . '/customer/login')->with('error', 'Customer not found');
+            return redirect('/customer/login')->with('error', 'Customer not found');
         }
 
-        // Generate API token for customer
-        $apiToken = $customer->createToken('whmcs-sso')->plainTextToken;
+        // Generate short-lived API token (1 hour)
+        $apiToken = $customer->createToken('whmcs-sso', ['customer'], now()->addHour())->plainTextToken;
 
-        // Redirect to frontend with token
-        return redirect($frontendUrl . "/customer/sso-callback?token={$apiToken}&email={$customer->email}");
+        $panelUrl = config('app.url');
+        // Use port 8443 for frontend
+        $frontendUrl = str_replace(':8080', ':8443', $panelUrl);
+
+        return redirect($frontendUrl . "/customer/sso-callback?token={$apiToken}&email=" . urlencode($customer->email));
     }
 
     /**

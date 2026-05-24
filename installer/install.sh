@@ -221,23 +221,43 @@ run_cmd "systemctl restart $OLS_SERVICE" "Restarting OLS on port 80"
 
 # Setup www-data sudo permissions for hosting provisioning
 cat > /etc/sudoers.d/qiwhost-www-data << 'SUDOEOF'
-www-data ALL=(ALL) NOPASSWD: /usr/sbin/useradd
-www-data ALL=(ALL) NOPASSWD: /usr/sbin/userdel
-www-data ALL=(ALL) NOPASSWD: /usr/sbin/usermod
+# QIWHOST Panel - Restricted sudoers for www-data
+# Only specific commands with specific paths allowed
+
+# User management (no wildcards on dangerous args)
+www-data ALL=(ALL) NOPASSWD: /usr/sbin/useradd -m -s /bin/bash *
+www-data ALL=(ALL) NOPASSWD: /usr/sbin/userdel -r *
 www-data ALL=(ALL) NOPASSWD: /usr/bin/chpasswd
-www-data ALL=(ALL) NOPASSWD: /usr/bin/passwd
-www-data ALL=(ALL) NOPASSWD: /bin/mkdir
-www-data ALL=(ALL) NOPASSWD: /bin/chown
-www-data ALL=(ALL) NOPASSWD: /bin/chmod
-www-data ALL=(ALL) NOPASSWD: /usr/sbin/setquota
-www-data ALL=(ALL) NOPASSWD: /bin/mv
-www-data ALL=(ALL) NOPASSWD: /bin/rm
-www-data ALL=(ALL) NOPASSWD: /usr/sbin/service
-www-data ALL=(ALL) NOPASSWD: /usr/bin/systemctl
-www-data ALL=(ALL) NOPASSWD: /usr/local/lsws/bin/lswsctrl
-www-data ALL=(ALL) NOPASSWD: /usr/local/bin/wp
-www-data ALL=(ALL) NOPASSWD: /snap/bin/certbot
-www-data ALL=(ALL) NOPASSWD: /usr/bin/certbot
+
+# File operations - restricted to /home/ only
+www-data ALL=(ALL) NOPASSWD: /bin/mkdir -p /home/*
+www-data ALL=(ALL) NOPASSWD: /bin/chown * /home/*
+www-data ALL=(ALL) NOPASSWD: /bin/chmod * /home/*
+www-data ALL=(ALL) NOPASSWD: /bin/mv /tmp/vhconf_* /usr/local/lsws/conf/vhosts/*
+www-data ALL=(ALL) NOPASSWD: /bin/rm /home/*/suspended.html
+
+# OLS control
+www-data ALL=(ALL) NOPASSWD: /usr/local/lsws/bin/lswsctrl reload
+www-data ALL=(ALL) NOPASSWD: /usr/local/lsws/bin/lswsctrl restart
+www-data ALL=(ALL) NOPASSWD: /usr/local/lsws/bin/lswsctrl stop
+www-data ALL=(ALL) NOPASSWD: /usr/local/lsws/bin/lswsctrl start
+
+# Certbot
+www-data ALL=(ALL) NOPASSWD: /snap/bin/certbot certonly *
+www-data ALL=(ALL) NOPASSWD: /usr/bin/certbot certonly *
+
+# UFW
+www-data ALL=(ALL) NOPASSWD: /usr/sbin/ufw allow *
+
+# Sed for OLS config (restricted to specific config files)
+www-data ALL=(ALL) NOPASSWD: /usr/bin/sed -i * /usr/local/lsws/conf/httpd_config.conf
+
+# passwd lock/unlock for suspend/unsuspend
+www-data ALL=(ALL) NOPASSWD: /usr/bin/passwd -l *
+www-data ALL=(ALL) NOPASSWD: /usr/bin/passwd -u *
+
+# Group management
+www-data ALL=(ALL) NOPASSWD: /usr/sbin/usermod -aG * www-data
 SUDOEOF
 chmod 440 /etc/sudoers.d/qiwhost-www-data
 run_cmd "visudo -c" "Validating sudoers syntax"
@@ -734,6 +754,7 @@ echo "$SERVER_IP" > /etc/qiwhost/server_ip
 
 WHMCS_SECRET=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | cut -c1-32)
 echo "WHMCS_SECRET_KEY=$WHMCS_SECRET" >> /opt/qiwhost/panel-api/.env
+echo "FRONTEND_URL=http://$SERVER_IP:8443" >> /opt/qiwhost/panel-api/.env
 
 cat > "$CONFIG_FILE" << EOF
 # QIWHOST Panel Installation Config

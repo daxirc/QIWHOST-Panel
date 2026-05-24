@@ -252,9 +252,14 @@ function qiwhost_ClientArea($params) {
     // Progress bar color
     $barColor = $diskPercent < 70 ? '#22c55e' : ($diskPercent < 90 ? '#eab308' : '#ef4444');
 
-    // SSO URL
-    $serverUrl = $params['serverhttpprefix'] . '://' . $params['serverip'] . ':' . $params['serverport'];
-    $ssoApiUrl = $serverUrl . '/api/whmcs/sso';
+    // Generate SSO URL server-side (backend call)
+    $ssoResult = qiwhost_api_call($params, 'sso', 'POST', ['username' => $params['username']]);
+    $ssoLoginUrl = '';
+    if (isset($ssoResult['success']) && $ssoResult['success']) {
+        $ssoLoginUrl = $ssoResult['data']['redirect_url'];
+    } else {
+        $ssoLoginUrl = '#sso-failed';
+    }
 
     return [
         'templatefile' => 'templates/clientarea',
@@ -268,9 +273,8 @@ function qiwhost_ClientArea($params) {
                 ? round($bandwidthUsed / 1024, 2) . ' GB'
                 : $bandwidthUsed . ' MB',
             'username'        => $params['username'],
-            'apiKey'          => $params['serverpassword'],
-            'ssoApiUrl'       => $ssoApiUrl,
-            'panelUrl'        => $serverUrl,
+            'ssoLoginUrl'     => $ssoLoginUrl,
+            'panelUrl'        => $params['serverhttpprefix'] . '://' . $params['serverip'] . ':' . $params['serverport'],
         ],
     ];
 }

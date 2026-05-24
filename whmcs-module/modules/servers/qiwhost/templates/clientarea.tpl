@@ -24,23 +24,22 @@
     </div>
 
     <!-- Login Button -->
-    <form method="POST" action="{$ssoApiUrl}" target="_blank">
-        <input type="hidden" name="username" value="{$username}">
-        <input type="hidden" name="whmcs_token" value="{$apiKey}">
-        <button type="submit" style="
-            width:100%;
-            background:#f97316;
-            color:#fff;
-            border:none;
-            border-radius:6px;
-            padding:12px 20px;
-            font-size:15px;
-            font-weight:bold;
-            cursor:pointer;
-            letter-spacing:0.3px;
-        ">
-            🔑 Login to Hosting Panel
-        </button>
-    </form>
+    <a href="{$ssoLoginUrl}" target="_blank" style="
+        display:block;
+        width:100%;
+        background:#f97316;
+        color:#fff;
+        border:none;
+        border-radius:6px;
+        padding:12px 20px;
+        font-size:15px;
+        font-weight:bold;
+        cursor:pointer;
+        text-align:center;
+        text-decoration:none;
+        box-sizing:border-box;
+    ">
+        🔑 Login to Hosting Panel
+    </a>
 
 </div>
