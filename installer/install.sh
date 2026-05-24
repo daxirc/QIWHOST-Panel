@@ -479,7 +479,8 @@ run_cmd "chown -R opendkim:opendkim /etc/opendkim/keys" "Setting OpenDKIM keys o
 
 # Install SpamAssassin
 run_cmd "apt-get install -y spamassassin spamc" "Installing SpamAssassin"
-run_cmd "systemctl enable spamd && systemctl start spamd" "Enabling and starting SpamAssassin"
+run_cmd "systemctl stop spamd || true" "Stopping SpamAssassin service"
+run_cmd "systemctl disable spamd || true" "Disabling SpamAssassin by default to save RAM"
 
 # Start mail services
 run_cmd "systemctl enable postfix dovecot opendkim && systemctl restart postfix dovecot opendkim" "Enabling and starting Mail stack services"
@@ -670,7 +671,9 @@ step_header "ClamAV Security Services Installation"
 run_cmd "apt-get install -y clamav clamav-daemon" "Installing ClamAV Antivirus"
 run_cmd "systemctl stop clamav-freshclam || true" "Stopping freshclam service for manual update"
 run_cmd "freshclam || true" "Updating ClamAV virus signatures database (can take a minute)"
-run_cmd "systemctl enable clamav-daemon clamav-freshclam && systemctl start clamav-daemon clamav-freshclam" "Enabling and starting ClamAV daemon"
+run_cmd "systemctl stop clamav-daemon clamav-freshclam clamav-daemon.socket || true" "Stopping ClamAV services"
+run_cmd "systemctl disable clamav-daemon clamav-freshclam clamav-daemon.socket || true" "Disabling ClamAV by default to save RAM"
+run_cmd "systemctl mask clamav-daemon.socket || true" "Masking ClamAV socket to prevent accidental trigger"
 
 # ==============================================================================
 # STEP 14: Clone and Setup QIWHOST Panel
