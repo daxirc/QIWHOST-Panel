@@ -64,8 +64,9 @@ function qiwhost_ConfigOptions() {
  * Helper: Make API call to QIWHOST Panel
  */
 function qiwhost_api_call($params, $endpoint, $method = 'POST', $data = []) {
-    $serverUrl = $params['serverhttpprefix'] . '://' . $params['serverip'] . ':' . $params['serverport'];
-    $apiUrl = $serverUrl . '/api/whmcs/' . $endpoint;
+    $host = !empty($params['serverhostname']) ? $params['serverhostname'] : $params['serverip'];
+    $serverUrl = $params['serverhttpprefix'] . '://' . $host . ':' . $params['serverport'];
+    $apiUrl = $serverUrl . '/backend/api/whmcs/' . $endpoint;
     $apiKey = $params['serverpassword']; // WHMCS "Password" field = API secret key
 
     $ch = curl_init();
