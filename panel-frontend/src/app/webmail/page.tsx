@@ -6,8 +6,8 @@ import { Mail, Loader2 } from "lucide-react";
 export default function WebmailRedirect() {
   useEffect(() => {
     if (typeof window !== "undefined") {
-      // Direct browser window redirect to the OLS port 80 endpoint
-      window.location.href = `http://${window.location.hostname}/webmail`;
+      const port = window.location.port ? `:${window.location.port}` : "";
+      window.location.href = `${window.location.protocol}//${window.location.hostname}${port}/webmail/`;
     }
   }, []);
 

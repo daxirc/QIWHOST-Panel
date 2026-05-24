@@ -15,11 +15,12 @@ export default function CustomerWebmail() {
   const [emails, setEmails] = useState<EmailAccount[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [webmailUrl, setWebmailUrl] = useState("http://127.0.0.1:8025");
+  const [webmailUrl, setWebmailUrl] = useState("https://127.0.0.1:8443/webmail/");
 
   useEffect(() => {
     if (typeof window !== "undefined") {
-      setWebmailUrl(`http://${window.location.hostname}:8025`);
+      const port = window.location.port ? `:${window.location.port}` : "";
+      setWebmailUrl(`${window.location.protocol}//${window.location.hostname}${port}/webmail/`);
     }
   }, []);
 

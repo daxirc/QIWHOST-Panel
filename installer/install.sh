@@ -240,7 +240,6 @@ run_cmd "systemctl disable apache2 2>/dev/null || true" "Disabling Apache"
 # Change OLS default port from 8088 to 80
 run_cmd "sed -i 's/address.*\*:8088/address                  *:80/' /usr/local/lsws/conf/httpd_config.conf" "Configuring OLS on port 80"
 
-# Configure OLS to proxy frontend (Next.js on port 3000)
 cat > /usr/local/lsws/conf/vhosts/Example/vhconf.conf << 'EOF'
 docRoot                   $VH_ROOT/html/
 enableGzip                1
@@ -256,9 +255,26 @@ extProcessor NextFrontend {
   autoStart               0
 }
 
+extProcessor RoundcubeWebmail {
+  type                    proxy
+  address                 http://127.0.0.1:8025
+  maxConns                100
+  initTimeout             60
+  retryTimeout            0
+  pcKeepAliveTimeout      60
+  respBuffer              0
+  autoStart               0
+}
+
 context / {
   type                    proxy
   handler                 NextFrontend
+  addDefaultCharset       off
+}
+
+context /webmail/ {
+  type                    proxy
+  handler                 RoundcubeWebmail
   addDefaultCharset       off
 }
 EOF
