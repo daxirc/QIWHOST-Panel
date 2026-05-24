@@ -22,7 +22,8 @@ import {
   ExternalLink,
   ChevronDown,
   Globe,
-  User
+  User,
+  AlertCircle
 } from "lucide-react";
 
 interface HostingAccount {
