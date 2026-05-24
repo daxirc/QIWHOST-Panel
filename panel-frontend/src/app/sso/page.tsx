@@ -9,10 +9,8 @@ function SsoRedirectInner() {
     useEffect(() => {
         const token = params.get("token");
         if (token) {
-            // Determine backend API host and port dynamically
-            const apiHost = typeof window !== "undefined" ? window.location.hostname : "";
-            // Default backend API port is 8080
-            const backendSsoUrl = `http://${apiHost}:8080/sso?token=${token}`;
+            // Use relative /backend path so Next.js rewrites handle it
+            const backendSsoUrl = `/backend/sso?token=${token}`;
             window.location.href = backendSsoUrl;
         } else {
             window.location.href = "/customer/login";

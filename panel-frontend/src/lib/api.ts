@@ -1,6 +1,15 @@
 import axios from "axios";
 
-const baseURL = process.env.NEXT_PUBLIC_API_URL || "";
+// Use relative /backend path so Next.js rewrites handle it
+// This avoids Mixed Content: HTTPS frontend → HTTP API
+const getBaseURL = () => {
+  if (typeof window !== 'undefined') {
+    return `${window.location.protocol}//${window.location.host}/backend/api`;
+  }
+  return 'http://127.0.0.1:8080/api';
+};
+
+const baseURL = getBaseURL();
 
 // 1. Admin API axios instance
 export const AdminAPI = axios.create({

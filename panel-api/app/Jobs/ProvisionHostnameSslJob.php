@@ -86,16 +86,17 @@ class ProvisionHostnameSslJob implements ShouldQueue
         // STEP 3: Configure OLS SSL Listener for panel ports
         $this->updateStatus(3, 'processing', 'Configuring OpenLiteSpeed SSL...');
 
+        // Configure OLS SSL listener
         $certPath = "/etc/letsencrypt/live/{$this->hostname}";
-        $configFile = '/usr/local/lsws/conf/httpd_config.conf';
-        $config = file_get_contents($configFile);
+        $olsConf = '/usr/local/lsws/conf/httpd_config.conf';
 
-        // Remove existing panel SSL listeners
-        $config = preg_replace('/\nlistener PanelSSL \{[^}]*\}\n/', "\n", $config);
+        $config = file_get_contents($olsConf);
+        // Remove old PanelFrontend listener
+        $config = preg_replace('/\nlistener PanelFrontend \{[^}]*\}/', '', $config);
 
-        // Add Panel SSL listener for port 8443 (frontend)
-        $panelSslListener = "\nlistener PanelSSL {\n" .
-            "  address                  *:{$this->frontendPort}\n" .
+        // Add new one with cert
+        $sslListener = "\nlistener PanelFrontend {\n" .
+            "  address                  *:8443\n" .
             "  secure                   1\n" .
             "  keyFile                  {$certPath}/privkey.pem\n" .
             "  certFile                 {$certPath}/fullchain.pem\n" .
@@ -103,31 +104,36 @@ class ProvisionHostnameSslJob implements ShouldQueue
             "  map                      Example *\n" .
             "}\n";
 
-        $config .= $panelSslListener;
+        $config = rtrim($config) . "\n" . $sslListener;
+        file_put_contents("/tmp/httpd_ssl_update.conf", $config);
 
-        // Write via temp file
-        $tempFile = '/tmp/httpd_config_hostname_ssl.conf';
-        file_put_contents($tempFile, $config);
-        $mvProc = new Process(['sudo', 'mv', $tempFile, $configFile]);
-        $mvProc->run();
+        $mv = new Process(['sudo', 'mv', '/tmp/httpd_ssl_update.conf', $olsConf]);
+        $mv->run();
 
-        // UFW: open panel ports
-        foreach ([$this->frontendPort, $this->apiPort] as $port) {
-            $proc = new Process(['sudo', 'ufw', 'allow', $port . '/tcp']);
-            $proc->run();
-        }
+        // Open port 8443
+        $ufw = new Process(['sudo', 'ufw', 'allow', '8443/tcp']);
+        $ufw->run();
 
-        // Reload OLS
-        $reload = new Process(['sudo', '/usr/local/lsws/bin/lswsctrl', 'reload']);
-        $reload->run();
+        // Restart OLS
+        $restart = new Process(['sudo', '/usr/local/lsws/bin/lswsctrl', 'restart']);
+        $restart->run();
         sleep(3);
+
+        // Update /etc/hosts to use real IP
+        $serverIp = trim(shell_exec("hostname -I | awk '{print $1}'"));
+        $hostsContent = file_get_contents('/etc/hosts');
+        $hostsContent = preg_replace('/.*' . preg_quote($this->hostname, '/') . '.*\n/', '', $hostsContent);
+        $hostsContent .= "\n{$serverIp} {$this->hostname}\n";
+        file_put_contents('/tmp/hosts_update', $hostsContent);
+        $hostsProc = new Process(['sudo', 'mv', '/tmp/hosts_update', '/etc/hosts']);
+        $hostsProc->run();
 
         $this->updateStatus(3, 'done', 'OLS SSL configured.');
 
         // STEP 4: Update Panel URLs to HTTPS
         $this->updateStatus(4, 'processing', 'Updating panel configuration to HTTPS...');
 
-        // Update Laravel .env APP_URL
+        // Update Laravel .env APP_URL and FRONTEND_URL
         $envFile = base_path('.env');
         $envContent = file_get_contents($envFile);
         $envContent = preg_replace(
@@ -135,12 +141,17 @@ class ProvisionHostnameSslJob implements ShouldQueue
             "APP_URL=https://{$this->hostname}:{$this->apiPort}",
             $envContent
         );
+        $envContent = preg_replace(
+            '/^FRONTEND_URL=.*/m',
+            "FRONTEND_URL=https://{$this->hostname}:{$this->frontendPort}",
+            $envContent
+        );
         file_put_contents($envFile, $envContent);
 
         // Update frontend .env.local
         $frontendEnv = '/opt/qiwhost/panel-frontend/.env.local';
-        $frontendContent = "NEXT_PUBLIC_API_URL=https://{$this->hostname}:{$this->apiPort}/api\n";
-        $frontendContent .= "NEXT_PUBLIC_SERVER_IP={$serverIp}\n";
+        $frontendContent = "NEXT_PUBLIC_SERVER_IP={$serverIp}\n";
+        $frontendContent .= "NEXT_PUBLIC_HOSTNAME={$this->hostname}\n";
         file_put_contents($frontendEnv, $frontendContent);
 
         // Update settings table

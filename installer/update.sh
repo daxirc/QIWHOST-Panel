@@ -76,6 +76,11 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+# Ensure clean build
+chown -R root:root /opt/qiwhost/panel-frontend/.next 2>/dev/null || true
+chmod -R 777 /opt/qiwhost/panel-frontend/.next 2>/dev/null || true
+rm -rf /opt/qiwhost/panel-frontend/.next
+
 npm run build >> "$LOG_FILE" 2>&1
 if [ $? -ne 0 ]; then
     log_error "Frontend Next.js production build failed."

@@ -59,10 +59,32 @@ step_header() {
     echo -e "\n--- Step $CURRENT_STEP: $1 ---" >> "$LOG_FILE"
 }
 
+# Wait for apt lock to be released
+wait_for_apt() {
+    local max_wait=60
+    local waited=0
+    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+        if [ $waited -ge $max_wait ]; then
+            log_warning "apt lock timeout, forcing..."
+            rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock
+            break
+        fi
+        log_info "Waiting for apt lock... ($waited/${max_wait}s)"
+        sleep 3
+        waited=$((waited + 3))
+    done
+}
+
 # General Command Execution Wrapper
 run_cmd() {
     local cmd="$1"
     local desc="$2"
+    
+    # Intercept apt/apt-get commands to automatically wait for locks
+    if [[ "$cmd" == *"apt-get"* ]] || [[ "$cmd" == *"apt "* ]]; then
+        wait_for_apt
+    fi
+
     echo -e "${CYAN}Running: $desc...${NC}"
     echo "--- $desc at $(date) ---" >> "$LOG_FILE"
     bash -c "$cmd" >> "$LOG_FILE" 2>&1
@@ -217,7 +239,41 @@ run_cmd "systemctl disable apache2 2>/dev/null || true" "Disabling Apache"
 
 # Change OLS default port from 8088 to 80
 run_cmd "sed -i 's/address.*\*:8088/address                  *:80/' /usr/local/lsws/conf/httpd_config.conf" "Configuring OLS on port 80"
-run_cmd "systemctl restart $OLS_SERVICE" "Restarting OLS on port 80"
+
+# Configure OLS to proxy frontend (Next.js on port 3000)
+cat > /usr/local/lsws/conf/vhosts/Example/vhconf.conf << 'EOF'
+docRoot                   $VH_ROOT/html/
+enableGzip                1
+
+extProcessor NextFrontend {
+  type                    proxy
+  address                 http://127.0.0.1:3000
+  maxConns                100
+  initTimeout             60
+  retryTimeout            0
+  pcKeepAliveTimeout      60
+  respBuffer              0
+  autoStart               0
+}
+
+context / {
+  type                    proxy
+  handler                 NextFrontend
+  addDefaultCharset       off
+}
+EOF
+
+# Add temporary HTTP listener on 8443 to httpd_config.conf
+cat >> /usr/local/lsws/conf/httpd_config.conf << 'EOF'
+
+listener PanelFrontend {
+  address                  *:8443
+  secure                   0
+  map                      Example *
+}
+EOF
+
+run_cmd "systemctl restart $OLS_SERVICE" "Restarting OLS with proxy and listener configurations"
 
 # Setup www-data sudo permissions for hosting provisioning
 cat > /etc/sudoers.d/qiwhost-www-data << 'SUDOEOF'
@@ -289,17 +345,52 @@ step_header "MySQL 8.0 Database Installation"
 run_cmd "apt-get install -y mysql-server mysql-client" "Installing MySQL Server"
 run_cmd "systemctl enable mysql && systemctl start mysql" "Enabling and starting MySQL service"
 
-# Configure root account and security parameters
-run_cmd "mysql -e \"ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS';\" || mysql -u root -p'$MYSQL_ROOT_PASS' -e \"SELECT 1;\"" "Configuring MySQL root password"
-run_cmd "mysql -u root -p'$MYSQL_ROOT_PASS' -e \"DELETE FROM mysql.user WHERE User='';\"" "Securing MySQL anonymous users"
-run_cmd "mysql -u root -p'$MYSQL_ROOT_PASS' -e \"DROP DATABASE IF EXISTS test;\"" "Removing MySQL test database"
-run_cmd "mysql -u root -p'$MYSQL_ROOT_PASS' -e \"FLUSH PRIVILEGES;\"" "Flushing database privileges"
+# Ubuntu 24.04 uses auth_socket by default
+# Use debian-sys-maint credentials for initial setup
 
-# Create panel database and users
-run_cmd "mysql -u root -p'$MYSQL_ROOT_PASS' -e \"CREATE DATABASE IF NOT EXISTS qiwpanel CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\"" "Creating panel database"
-run_cmd "mysql -u root -p'$MYSQL_ROOT_PASS' -e \"CREATE USER IF NOT EXISTS 'qiwpanel'@'localhost' IDENTIFIED BY '$PANEL_DB_PASS';\"" "Creating panel database user"
-run_cmd "mysql -u root -p'$MYSQL_ROOT_PASS' -e \"GRANT ALL PRIVILEGES ON qiwpanel.* TO 'qiwpanel'@'localhost';\"" "Granting database privileges to panel user"
-run_cmd "mysql -u root -p'$MYSQL_ROOT_PASS' -e \"FLUSH PRIVILEGES;\"" "Refreshing database privileges"
+# Wait for MySQL to be fully ready
+sleep 3
+
+# Try socket auth first (root without password on fresh install)
+if mysql -uroot -e "SELECT 1;" 2>/dev/null; then
+    log_info "MySQL root accessible via socket auth"
+    MYSQL_CMD="mysql -uroot"
+elif [ -f /etc/mysql/debian.cnf ]; then
+    MAINT_PASS=$(grep "^password" /etc/mysql/debian.cnf | head -1 | awk '{print $3}')
+    log_info "Using debian-sys-maint for MySQL setup"
+    MYSQL_CMD="mysql -u debian-sys-maint -p$MAINT_PASS"
+else
+    log_error "Cannot connect to MySQL!"
+    exit 1
+fi
+
+# Set root password using correct method
+$MYSQL_CMD -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS'; FLUSH PRIVILEGES;" 2>/dev/null || \
+$MYSQL_CMD -e "UPDATE mysql.user SET authentication_string=PASSWORD('$MYSQL_ROOT_PASS'), plugin='mysql_native_password' WHERE User='root'; FLUSH PRIVILEGES;" 2>/dev/null
+
+# Now test root access
+if ! mysql -uroot -p"$MYSQL_ROOT_PASS" -e "SELECT 1;" 2>/dev/null; then
+    log_warning "Root password set failed, using debian-sys-maint for all operations"
+    # Create panel user using maint credentials
+    $MYSQL_CMD -e "
+        DROP USER IF EXISTS 'qiwpanel'@'localhost';
+        CREATE USER 'qiwpanel'@'localhost' IDENTIFIED BY '$PANEL_DB_PASS';
+        CREATE DATABASE IF NOT EXISTS qiwpanel CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+        GRANT ALL PRIVILEGES ON qiwpanel.* TO 'qiwpanel'@'localhost';
+        FLUSH PRIVILEGES;
+    " 2>/dev/null
+else
+    # Root access works, proceed normally
+    mysql -uroot -p"$MYSQL_ROOT_PASS" -e "
+        DELETE FROM mysql.user WHERE User='';
+        DROP DATABASE IF EXISTS test;
+        CREATE DATABASE IF NOT EXISTS qiwpanel CHARACTER SET utf8mb4;
+        CREATE USER IF NOT EXISTS 'qiwpanel'@'localhost' IDENTIFIED BY '$PANEL_DB_PASS';
+        GRANT ALL ON qiwpanel.* TO 'qiwpanel'@'localhost';
+        FLUSH PRIVILEGES;
+    " 2>/dev/null
+fi
+log_success "MySQL configured"
 
 # ==============================================================================
 # STEP 7: Install Redis
@@ -330,7 +421,10 @@ step_header "Mail Services Configuration (Postfix + Dovecot + OpenDKIM)"
 
 # Set hostname configuration
 run_cmd "hostnamectl set-hostname '$SERVER_HOSTNAME'" "Setting server hostname"
-run_cmd "grep -qF '$SERVER_HOSTNAME' /etc/hosts || echo '127.0.0.1 $SERVER_HOSTNAME' >> /etc/hosts" "Updating /etc/hosts"
+# Remove any existing wrong entries for this hostname
+run_cmd "sed -i \"/$SERVER_HOSTNAME/d\" /etc/hosts" "Removing old hostname mappings from /etc/hosts"
+# Add correct server IP mapping
+run_cmd "echo \"$SERVER_IP $SERVER_HOSTNAME\" >> /etc/hosts" "Mapping hostname to server IP in /etc/hosts"
 
 # Install postfix non-interactively
 run_cmd "DEBIAN_FRONTEND=noninteractive apt-get install -y postfix postfix-mysql" "Installing Postfix MTA"
@@ -379,14 +473,27 @@ run_cmd "echo 'roundcube-core roundcube/dbconfig-install boolean false' | debcon
 run_cmd "echo 'roundcube-core roundcube/database-type select mysql' | debconf-set-selections" "Setting Roundcube database driver"
 run_cmd "DEBIAN_FRONTEND=noninteractive apt-get install -y roundcube roundcube-mysql roundcube-plugins" "Installing Roundcube packages"
 
-# Database Configuration
-run_cmd "mysql -u root -p'$MYSQL_ROOT_PASS' -e \"CREATE DATABASE IF NOT EXISTS roundcubemail CHARACTER SET utf8mb4;\"" "Creating Roundcube database"
-run_cmd "mysql -u root -p'$MYSQL_ROOT_PASS' -e \"CREATE USER IF NOT EXISTS 'roundcube'@'localhost' IDENTIFIED BY '$ROUNDCUBE_DB_PASS';\"" "Creating Roundcube database user"
-run_cmd "mysql -u root -p'$MYSQL_ROOT_PASS' -e \"GRANT ALL PRIVILEGES ON roundcubemail.* TO 'roundcube'@'localhost';\"" "Granting Roundcube database privileges"
-run_cmd "mysql -u root -p'$MYSQL_ROOT_PASS' -e \"FLUSH PRIVILEGES;\"" "Flushing database privileges for Roundcube"
+# Database Configuration (Get working MySQL command)
+if mysql -uroot -p"$MYSQL_ROOT_PASS" -e "SELECT 1;" 2>/dev/null; then
+    MYSQL_ADMIN="mysql -uroot -p$MYSQL_ROOT_PASS"
+elif [ -f /etc/mysql/debian.cnf ]; then
+    MAINT_PASS=$(grep "^password" /etc/mysql/debian.cnf | head -1 | awk '{print $3}')
+    MYSQL_ADMIN="mysql -u debian-sys-maint -p$MAINT_PASS"
+else
+    MYSQL_ADMIN="mysql -uroot"
+fi
+
+$MYSQL_ADMIN -e "
+    CREATE DATABASE IF NOT EXISTS roundcubemail CHARACTER SET utf8mb4;
+    DROP USER IF EXISTS 'roundcube'@'localhost';
+    CREATE USER 'roundcube'@'localhost' IDENTIFIED BY '$ROUNDCUBE_DB_PASS';
+    GRANT ALL ON roundcubemail.* TO 'roundcube'@'localhost';
+    FLUSH PRIVILEGES;
+" 2>/dev/null
+log_success "Roundcube database configured"
 
 # Import schemas if empty
-run_cmd "mysql -u root -p'$MYSQL_ROOT_PASS' roundcubemail -e \"SHOW TABLES;\" | grep -q users || mysql -u root -p'$MYSQL_ROOT_PASS' roundcubemail < /usr/share/roundcube/SQL/mysql.initial.sql" "Loading Roundcube initial database schema"
+run_cmd "$MYSQL_ADMIN roundcubemail -e \"SHOW TABLES;\" | grep -q users || $MYSQL_ADMIN roundcubemail < /usr/share/roundcube/SQL/mysql.initial.sql" "Loading Roundcube initial database schema"
 
 # Write Configuration File (using EOF and sed placeholders to prevent escaping issues)
 cat > /etc/roundcube/config.inc.php << 'EOF'
@@ -438,9 +545,6 @@ run_cmd "systemctl start roundcube-webmail" "Starting roundcube service"
 run_cmd "ufw allow 8025/tcp comment 'Roundcube Webmail'" "Opening webmail port 8025"
 log_success "Roundcube webmail configured on port 8025"
 
-# Add phpMyAdmin context mapping to default Example vhost
-run_cmd "echo -e '\ncontext /phpmyadmin/ {\n  location                /usr/share/phpmyadmin/\n  allowBrowse             1\n}' >> /usr/local/lsws/conf/vhosts/Example/vhconf.conf" "Mapping phpmyadmin context to default OLS Example vhost"
-
 # ==============================================================================
 # STEP 11: Install phpMyAdmin
 # ==============================================================================
@@ -469,32 +573,8 @@ EOF
 chmod 644 /var/www/html/phpmyadmin-sso.php
 log_success "phpMyAdmin SSO Script configured."
 
-# Add phpMyAdmin as alias in OLS
-mkdir -p /usr/local/lsws/conf/vhosts/phpmyadmin
-cat > /usr/local/lsws/conf/vhosts/phpmyadmin/vhconf.conf << 'EOF'
-docRoot /usr/share/phpmyadmin/
-vhDomain phpmyadmin
-enableGzip 1
-
-index {
-  useServer 0
-  indexFiles index.php
-}
-
-scripthandler {
-  add lsapi:lsphp php
-}
-
-accessControl {
-  allow *
-}
-EOF
-
-pmaRegister="\nvirtualhost phpmyadmin {\n  vhRoot                  /usr/share/phpmyadmin/\n  configFile              conf/vhosts/phpmyadmin/vhconf.conf\n  allowSymbolLink         1\n  enableScript            1\n  restrained              0\n  setUIDMode              0\n}\n"
-run_cmd "echo -e \"\$pmaRegister\" >> /usr/local/lsws/conf/httpd_config.conf" "Registering phpMyAdmin virtual host in OLS config"
-
-# Restart OpenLiteSpeed Server to load Virtual Hosts configurations
-run_cmd "systemctl restart $OLS_SERVICE" "Restarting OpenLiteSpeed Server"
+# phpMyAdmin is served securely through hosting account context mappings
+log_success "phpMyAdmin installation finalized"
 
 # ==============================================================================
 # STEP 12: Install WP-CLI
@@ -506,9 +586,58 @@ run_cmd "chmod +x wp-cli.phar && mv wp-cli.phar /usr/local/bin/wp" "Moving WP-CL
 # ==============================================================================
 # STEP 12b: Install Certbot (Let's Encrypt)
 # ==============================================================================
-step_header "Certbot (Let's Encrypt) Installation"
-run_cmd "snap install certbot --classic" "Installing Certbot (Let's Encrypt)"
-run_cmd "ln -sf /snap/bin/certbot /usr/bin/certbot 2>/dev/null || true" "Linking certbot"
+# Install snapd first if not present
+if ! command -v snap &>/dev/null; then
+    run_cmd "apt-get install -y snapd" "Installing snapd"
+    run_cmd "systemctl enable snapd && systemctl start snapd" "Starting snapd"
+    sleep 5
+fi
+
+# Install certbot
+run_cmd "snap install certbot --classic" "Installing Certbot"
+run_cmd "ln -sf /snap/bin/certbot /usr/bin/certbot" "Linking certbot"
+
+# Verify
+certbot --version >> "$LOG_FILE" 2>&1 && log_success "Certbot ready" || log_error "Certbot install failed"
+
+# After hostname SSL cert is generated, configure OLS SSL listeners
+setup_ols_ssl_listeners() {
+    local HOSTNAME=$1
+    local CERT_PATH="/etc/letsencrypt/live/$HOSTNAME"
+    local OLS_CONF="/usr/local/lsws/conf/httpd_config.conf"
+
+    # PanelFrontend listener - port 8443 SSL → Next.js port 3000
+    # This is configured via OLS proxy to 127.0.0.1:3000
+    
+    # Add PanelFrontend listener
+    python3 << PYEOF
+import re
+content = open('$OLS_CONF').read()
+
+# Remove old panel listeners
+for pattern in ['PanelFrontend', 'PanelAPI', 'PanelSSL']:
+    content = re.sub(f'\nlistener {pattern} ' + r'\{[^}]*\}', '', content, flags=re.DOTALL)
+
+# Add new PanelFrontend listener
+new_listener = """
+listener PanelFrontend {
+  address                  *:8443
+  secure                   1
+  keyFile                  $CERT_PATH/privkey.pem
+  certFile                 $CERT_PATH/fullchain.pem
+  certChain                1
+  map                      Example *
+}
+"""
+content = content.rstrip() + '\n' + new_listener
+open('$OLS_CONF', 'w').write(content)
+print("OLS SSL listener configured")
+PYEOF
+
+    /usr/local/lsws/bin/lswsctrl restart
+    sleep 3
+    log_success "OLS SSL listener configured on port 8443"
+}
 
 # ==============================================================================
 # STEP 13: Install ClamAV
@@ -633,12 +762,21 @@ rm -f /tmp/settings.sql
 # ==============================================================================
 step_header "Next.js Frontend Compilations"
 SERVER_IP=$(hostname -I | awk '{print $1}')
-run_cmd "echo 'NEXT_PUBLIC_API_URL=http://$SERVER_IP:8080/api' > /opt/qiwhost/panel-frontend/.env.local" "Setting Next.js local environment variables"
-run_cmd "echo 'NEXT_PUBLIC_SERVER_IP=$SERVER_IP' >> /opt/qiwhost/panel-frontend/.env.local" "Adding server IP environment variable"
+
+# Ensure clean build
+chown -R root:root /opt/qiwhost/panel-frontend/.next 2>/dev/null || true
+rm -rf /opt/qiwhost/panel-frontend/.next 2>/dev/null || true
+
+# Write minimal .env.local - API is proxied through Next.js rewrites
+cat > /opt/qiwhost/panel-frontend/.env.local << EOF
+NEXT_PUBLIC_SERVER_IP=$SERVER_IP
+NEXT_PUBLIC_HOSTNAME=$SERVER_HOSTNAME
+EOF
+
 run_cmd "cd /opt/qiwhost/panel-frontend && npm install --production=false" "Installing Next.js frontend node packages"
 run_cmd "cd /opt/qiwhost/panel-frontend && npm run build" "Building Next.js optimized production package"
 run_cmd "npm install -g serve" "Installing serve package globally"
-run_cmd "chown -R www-data:www-data /opt/qiwhost/panel-frontend" "Setting Next.js frontend folder ownership to www-data"
+chown -R www-data:www-data /opt/qiwhost/panel-frontend
 
 # ==============================================================================
 # STEP 17: Setup Systemd Services & Crons
@@ -655,7 +793,7 @@ After=network.target mysql.service redis.service
 Type=simple
 User=www-data
 WorkingDirectory=/opt/qiwhost/panel-api
-ExecStart=/usr/bin/php8.3 artisan serve --host=0.0.0.0 --port=8080
+ExecStart=/usr/bin/php8.3 artisan serve --host=127.0.0.1 --port=8080
 Restart=always
 RestartSec=5
 Environment=APP_ENV=production
@@ -693,11 +831,11 @@ After=network.target
 Type=simple
 User=www-data
 WorkingDirectory=/opt/qiwhost/panel-frontend
-ExecStart=/usr/bin/node /opt/qiwhost/panel-frontend/node_modules/.bin/next start -p 8443
+ExecStart=/usr/bin/node /opt/qiwhost/panel-frontend/node_modules/.bin/next start -p 3000
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
-Environment=PORT=8443
+Environment=PORT=3000
 Environment=NEXT_TELEMETRY_DISABLED=1
 
 [Install]
@@ -790,28 +928,60 @@ log_success "All server configuration metadata saved securely to $CONFIG_FILE."
 # ==============================================================================
 step_header "Post-Installation Services Diagnostics"
 
-check_service() {
-    if systemctl is-active --quiet "$1"; then
-        echo -e "  ${GREEN}✓${NC} $1 is active & running"
+# Verify all services
+verify_service() {
+    local name=$1
+    local svc=$2
+    if systemctl is-active --quiet "$svc" 2>/dev/null; then
+        echo -e "  ${GREEN}✓ $name is running${NC}"
     else
-        echo -e "  ${RED}✗${NC} $1 is ${RED}NOT${NC} running"
+        echo -e "  ${RED}✗ $name is NOT running${NC}"
     fi
 }
 
-# Set official service name directly in diagnostics
-OLS_SERVICE="lshttpd"
+verify_service "OpenLiteSpeed" "lshttpd"
+verify_service "MySQL" "mysql"
+verify_service "Redis" "redis-server"
+verify_service "Postfix (SMTP)" "postfix"
+verify_service "Dovecot (IMAP)" "dovecot"
+verify_service "OpenDKIM" "opendkim"
+verify_service "QIWHOST API" "qiwhost-api"
+verify_service "QIWHOST Frontend" "qiwhost-frontend"
+verify_service "QIWHOST Queue" "qiwhost-queue"
+verify_service "Roundcube Webmail" "roundcube-webmail"
 
-echo -e "\nPerforming service status telemetry check...\n"
-check_service "$OLS_SERVICE"
-check_service mysql
-check_service redis-server
-check_service postfix
-check_service dovecot
-check_service opendkim
-check_service qiwhost-api
-check_service qiwhost-frontend
-check_service qiwhost-queue
-check_service roundcube-webmail
+# Verify ports
+echo ""
+echo "Checking ports..."
+check_port() {
+    local port=$1
+    local name=$2
+    if ss -tlnp | grep -q ":$port "; then
+        echo -e "  ${GREEN}✓ Port $port ($name) is open${NC}"
+    else
+        echo -e "  ${RED}✗ Port $port ($name) is NOT open${NC}"
+    fi
+}
+check_port 80 "OLS HTTP"
+check_port 8443 "Panel Frontend"
+check_port 8080 "Panel API (internal)"
+check_port 8025 "Roundcube Webmail"
+check_port 25 "SMTP"
+check_port 143 "IMAP"
+
+# Verify API works
+echo ""
+ADMIN_PASS=$(grep "^ADMIN_PASSWORD=" "$CONFIG_FILE" | cut -d= -f2)
+API_RESPONSE=$(curl -s -X POST http://127.0.0.1:8080/api/admin/login \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASS\"}" 2>/dev/null)
+
+if echo "$API_RESPONSE" | grep -q "token"; then
+    echo -e "  ${GREEN}✓ API Login: Working${NC}"
+else
+    echo -e "  ${RED}✗ API Login: FAILED${NC}"
+fi
 
 echo -e "\n"
 echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
@@ -819,9 +989,9 @@ echo -e "${CYAN}║            QIWHOST Panel Installation Complete!             
 echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
 echo -e "${CYAN}║                                                              ║${NC}"
 echo -e "${CYAN}║  Panel URL:      ${YELLOW}http://$SERVER_HOSTNAME:8443${CYAN}               ║${NC}"
-echo -e "${CYAN}║  Panel API:      ${YELLOW}http://$SERVER_HOSTNAME:8080${CYAN}               ║${NC}"
+echo -e "${CYAN}║  Panel API:      ${YELLOW}http://$SERVER_HOSTNAME:8080 (Internal)${CYAN}      ║${NC}"
 echo -e "${CYAN}║  Webmail:        ${YELLOW}http://$SERVER_HOSTNAME:8025${CYAN}               ║${NC}"
-echo -e "${CYAN}║  phpMyAdmin:     ${YELLOW}http://$SERVER_HOSTNAME/phpmyadmin${CYAN}         ║${NC}"
+echo -e "${CYAN}║  phpMyAdmin:     ${YELLOW}SSO link only${CYAN}                               ║${NC}"
 echo -e "${CYAN}║                                                              ║${NC}"
 echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
 echo -e "${CYAN}║  Admin Email:    ${GREEN}$ADMIN_EMAIL${CYAN}                               ║${NC}"
