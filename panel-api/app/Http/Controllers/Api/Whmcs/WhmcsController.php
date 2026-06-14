@@ -248,7 +248,7 @@ class WhmcsController extends Controller
         // Use port 8443 for frontend
         $frontendUrl = str_replace(':8080', ':8443', $panelUrl);
 
-        return redirect($frontendUrl . "/customer/sso-callback?token={$apiToken}&email=" . urlencode($customer->email));
+        return redirect($frontendUrl . "/customer/sso-callback?token={$apiToken}&email=" . urlencode($customer->email) . "&name=" . urlencode($customer->name));
     }
 
     /**

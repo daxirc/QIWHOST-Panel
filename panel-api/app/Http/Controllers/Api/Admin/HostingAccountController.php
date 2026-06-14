@@ -7,6 +7,7 @@ use App\Models\HostingAccount;
 use App\Models\Customer;
 use App\Models\HostingPackage;
 use App\Models\Domain;
+use App\Services\DnsZoneSyncService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Symfony\Component\Process\Process;
@@ -58,6 +59,9 @@ class HostingAccountController extends Controller
                 'is_main' => true,
                 'status' => 'active',
             ]);
+
+            // Auto-provision default DNS records for the primary domain
+            DnsZoneSyncService::provisionDefaultRecords($domain);
 
             // 2. Linux OS User Provisioning via Symfony Process
             try {
@@ -352,7 +356,13 @@ HTML;
                                 "}\n\n" .
                                 "context /phpmyadmin/ {\n" .
                                 "  location                /usr/share/phpmyadmin/\n" .
-                                "  allowBrowse             1\n" .
+                                "  allowBrowse             1\n\n" .
+                                "  accessControl  {\n" .
+                                "    allow                 *\n" .
+                                "  }\n\n" .
+                                "  phpIniOverride  {\n" .
+                                "    php_value include_path \".:/usr/share/php\"\n" .
+                                "  }\n" .
                                 "}\n";
 
                 // Write vhost stub
@@ -450,8 +460,13 @@ HTML;
             $proc->run();
 
             // 2. Disable OLS vhost by renaming vhconf.conf
-            $vhostConf = "/usr/local/lsws/conf/vhosts/{$account->domain}/vhconf.conf";
-            $vhostConfDisabled = "/usr/local/lsws/conf/vhosts/{$account->domain}/vhconf.conf.disabled";
+            $vhostDir = "/usr/local/lsws/conf/vhosts/{$account->domain}";
+            $vhostConf = "{$vhostDir}/vhconf.conf";
+            $vhostConfDisabled = "{$vhostDir}/vhconf.conf.disabled";
+
+            // Ensure vhost directory exists
+            $mkdirProc = new Process(['sudo', 'mkdir', '-p', $vhostDir]);
+            $mkdirProc->run();
 
             $checkProc = new Process(['sudo', 'test', '-f', $vhostConf]);
             $checkProc->run();
@@ -467,24 +482,47 @@ HTML;
             ]);
             $proc->run();
 
-            // 4. Create suspended page html in /tmp and mv it to user's home securely
+            // 4. Create suspended page html in user's public_html
             $suspendedHtml = <<<HTML
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Account Suspended</title>
 <style>
-body { font-family: sans-serif; text-align: center; padding: 80px; background: #f8f8f8; }
-.box { background: #fff; border: 2px solid #e74c3c; border-radius: 8px; padding: 40px; max-width: 500px; margin: 0 auto; }
-h1 { color: #e74c3c; }
-p { color: #666; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { 
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: #fff;
+}
+.container {
+    text-align: center; max-width: 520px; padding: 3rem 2rem;
+    background: rgba(255,255,255,0.05); border-radius: 24px;
+    border: 1px solid rgba(255,255,255,0.1);
+    backdrop-filter: blur(20px); box-shadow: 0 25px 50px rgba(0,0,0,0.3);
+}
+.icon { font-size: 4rem; margin-bottom: 1.5rem; }
+h1 { font-size: 1.8rem; font-weight: 700; margin-bottom: 0.75rem; }
+p { color: rgba(255,255,255,0.65); line-height: 1.7; font-size: 0.95rem; }
+.badge {
+    display: inline-block; margin-top: 1.5rem; padding: 0.5rem 1.5rem;
+    background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3);
+    border-radius: 100px; color: #fca5a5; font-size: 0.8rem; font-weight: 600;
+    letter-spacing: 0.05em; text-transform: uppercase;
+}
+.footer { margin-top: 2rem; font-size: 0.75rem; color: rgba(255,255,255,0.3); }
 </style>
 </head>
 <body>
-<div class="box">
-<h1>⚠️ Account Suspended</h1>
-<p>This hosting account has been suspended.</p>
-<p>Please contact support to restore access.</p>
+<div class="container">
+    <div class="icon">⚠️</div>
+    <h1>Account Suspended</h1>
+    <p>This hosting account has been suspended. If you believe this is an error, please contact your hosting provider for assistance.</p>
+    <div class="badge">Service Interrupted</div>
+    <div class="footer">Powered by QIWHOST Panel</div>
 </div>
 </body>
 </html>
@@ -493,7 +531,11 @@ HTML;
             $tempSuspendedFile = "/tmp/suspended_" . uniqid() . ".html";
             file_put_contents($tempSuspendedFile, $suspendedHtml);
 
-            $suspendedPath = "/home/{$account->system_username}/suspended.html";
+            // Ensure public_html directory exists
+            $mkdirPub = new Process(['sudo', 'mkdir', '-p', "/home/{$account->system_username}/public_html"]);
+            $mkdirPub->run();
+
+            $suspendedPath = "/home/{$account->system_username}/public_html/suspended.html";
             $mvHtmlProc = new Process(['sudo', 'mv', $tempSuspendedFile, $suspendedPath]);
             $mvHtmlProc->run();
 
@@ -503,14 +545,24 @@ HTML;
             $chmodProc = new Process(['sudo', 'chmod', '644', $suspendedPath]);
             $chmodProc->run();
 
-            // Create minimal vhconf that serves suspended page
+            // 5. Create minimal vhconf that serves ONLY the suspended page
             $suspendedVhconf = <<<VHOST
-docRoot                   /home/{$account->system_username}/
+docRoot                   /home/{$account->system_username}/public_html/
 vhDomain                  {$account->domain}
+vhAliases                 www.{$account->domain}
+enableGzip                1
 
 index  {
-  useServer               0
   indexFiles              suspended.html
+}
+
+rewrite  {
+  enable                  1
+  rules                   <<<END_rules
+RewriteEngine On
+RewriteCond %{REQUEST_URI} !^/suspended\.html$
+RewriteRule ^(.*)$ /suspended.html [L,R=302]
+END_rules
 }
 
 accessControl  {
@@ -524,14 +576,37 @@ VHOST;
             $mvVhconfProc = new Process(['sudo', 'mv', $tempVhconfFile, $vhostConf]);
             $mvVhconfProc->run();
 
-            // 5. Re-add domain to listener (serving suspended page)
+            // 6. Ensure virtualhost block exists in httpd_config.conf
+            $httpd_conf = '/usr/local/lsws/conf/httpd_config.conf';
+            $checkVhBlock = new Process(['grep', '-c', "virtualhost {$account->domain}", $httpd_conf]);
+            $checkVhBlock->run();
+            $vhBlockCount = (int) trim($checkVhBlock->getOutput());
+
+            if ($vhBlockCount === 0) {
+                $vhBlock = "\nvirtualhost {$account->domain} {\n" .
+                           "  vhRoot                  /home/{$account->system_username}/\n" .
+                           "  configFile              conf/vhosts/{$account->domain}/vhconf.conf\n" .
+                           "  allowSymbolLink         1\n" .
+                           "  enableScript            1\n" .
+                           "  restrained              0\n" .
+                           "  setUIDMode              0\n" .
+                           "}\n";
+
+                $tempVhBlock = "/tmp/vhblock_" . uniqid();
+                file_put_contents($tempVhBlock, $vhBlock);
+
+                $appendProc = new Process(['bash', '-c', "cat {$tempVhBlock} >> {$httpd_conf} && rm -f {$tempVhBlock}"]);
+                $appendProc->run();
+            }
+
+            // 7. Re-add domain to listener (serving suspended page)
             $proc = new Process(['sudo', 'sed', '-i',
                 "/listener Default{/a\\    map                      {$account->domain} {$account->domain}",
                 '/usr/local/lsws/conf/httpd_config.conf'
             ]);
             $proc->run();
 
-            // 6. Reload OLS
+            // 8. Reload OLS
             $proc = new Process(['sudo', '/usr/local/lsws/bin/lswsctrl', 'reload']);
             $proc->run();
         } catch (\Exception $e) {
@@ -551,32 +626,133 @@ VHOST;
             return $this->errorResponse('Hosting account not found.', null, 404);
         }
 
+        $username = $account->system_username;
+        $domain = $account->domain;
+        $vhostDir = "/usr/local/lsws/conf/vhosts/{$domain}";
+        $vhostConf = "{$vhostDir}/vhconf.conf";
+        $vhostConfDisabled = "{$vhostDir}/vhconf.conf.disabled";
+        $httpdConf = '/usr/local/lsws/conf/httpd_config.conf';
+
         try {
             // 1. Unlock OS user password
-            $proc = new Process(['sudo', 'passwd', '-u', $account->system_username]);
+            $proc = new Process(['sudo', 'passwd', '-u', $username]);
+            $proc->setTimeout(15);
             $proc->run();
 
-            // 2. Restore vhconf from disabled backup
-            $vhostConf = "/usr/local/lsws/conf/vhosts/{$account->domain}/vhconf.conf";
-            $vhostConfDisabled = "/usr/local/lsws/conf/vhosts/{$account->domain}/vhconf.conf.disabled";
+            // 2. Restore original vhconf from disabled backup
+            // First remove the suspended-redirect vhconf
+            $rmSuspendedVhconf = new Process(['sudo', 'rm', '-f', $vhostConf]);
+            $rmSuspendedVhconf->run();
 
+            // Then restore the original config
             $checkProc = new Process(['sudo', 'test', '-f', $vhostConfDisabled]);
             $checkProc->run();
             if ($checkProc->isSuccessful()) {
                 $mvProc = new Process(['sudo', 'mv', $vhostConfDisabled, $vhostConf]);
                 $mvProc->run();
+            } else {
+                // If no .disabled backup exists, regenerate a proper vhconf
+                $customer = $account->customer;
+                $customerEmail = $customer ? $customer->email : 'admin@' . $domain;
+
+                $vhostContent = "docRoot                   /home/{$username}/public_html/\n" .
+                                "vhDomain                  {$domain}\n" .
+                                "vhAliases                 www.{$domain}\n" .
+                                "adminEmails               {$customerEmail}\n" .
+                                "enableGzip                1\n" .
+                                "enableIpGeo               1\n\n" .
+                                "index  {\n" .
+                                "  useServer               0\n" .
+                                "  indexFiles              index.php, index.html\n" .
+                                "}\n\n" .
+                                "scripthandler  {\n" .
+                                "  add                     lsapi:lsphp php\n" .
+                                "}\n\n" .
+                                "rewrite  {\n" .
+                                "  enable                  1\n" .
+                                "  autoLoadHtaccess        1\n" .
+                                "}\n\n" .
+                                "accessControl  {\n" .
+                                "  allow                   *\n" .
+                                "}\n\n" .
+                                "context /webmail/ {\n" .
+                                "  location                /var/lib/roundcube/\n" .
+                                "  allowBrowse             1\n" .
+                                "}\n\n" .
+                                "context /phpmyadmin/ {\n" .
+                                "  location                /usr/share/phpmyadmin/\n" .
+                                "  allowBrowse             1\n" .
+                                "}\n";
+
+                $tmpVhconf = "/tmp/vhconf_unsuspend_" . uniqid() . ".conf";
+                file_put_contents($tmpVhconf, $vhostContent);
+                
+                (new Process(['sudo', 'mkdir', '-p', $vhostDir]))->run();
+                (new Process(['sudo', 'mv', $tmpVhconf, $vhostConf]))->run();
             }
 
-            // 3. Remove suspended.html
-            $suspendedPath = "/home/{$account->system_username}/suspended.html";
-            $rmProc = new Process(['sudo', 'rm', '-f', $suspendedPath]);
-            $rmProc->run();
+            // 3. Remove suspended.html from the CORRECT path (public_html)
+            $suspendedPaths = [
+                "/home/{$username}/public_html/suspended.html",
+                "/home/{$username}/suspended.html",
+            ];
+            foreach ($suspendedPaths as $sp) {
+                (new Process(['sudo', 'rm', '-f', $sp]))->run();
+            }
 
-            // 4. Reload OLS to apply restored vhost
-            $proc = new Process(['sudo', '/usr/local/lsws/bin/lswsctrl', 'reload']);
+            // 4. Remove any .htaccess rewrite rules that redirect to suspended page
+            $htaccessPath = "/home/{$username}/public_html/.htaccess";
+            $checkHtaccess = new Process(['sudo', 'test', '-f', $htaccessPath]);
+            $checkHtaccess->run();
+            if ($checkHtaccess->isSuccessful()) {
+                // Remove suspended redirect lines from .htaccess
+                $sedProc = new Process(['sudo', 'sed', '-i', '/suspended\.html/d', $htaccessPath]);
+                $sedProc->run();
+            }
+
+            // 5. Re-add listener map in httpd_config.conf (critical!)
+            // First check if the map already exists to avoid duplicates
+            $checkMap = new Process(['grep', '-c', "map.*{$domain}", $httpdConf]);
+            $checkMap->run();
+            $mapCount = (int) trim($checkMap->getOutput());
+
+            if ($mapCount === 0) {
+                $proc = new Process(['sudo', 'sed', '-i',
+                    "/listener Default{/a\\    map                      {$domain} {$domain}",
+                    $httpdConf
+                ]);
+                $proc->run();
+            }
+
+            // 6. Ensure virtualhost block exists in httpd_config.conf
+            $checkVh = new Process(['grep', '-c', "virtualhost {$domain}", $httpdConf]);
+            $checkVh->run();
+            $vhCount = (int) trim($checkVh->getOutput());
+
+            if ($vhCount === 0) {
+                $vhBlock = "\nvirtualhost {$domain} {\n" .
+                           "  vhRoot                  /home/{$username}/\n" .
+                           "  configFile              conf/vhosts/{$domain}/vhconf.conf\n" .
+                           "  allowSymbolLink         1\n" .
+                           "  enableScript            1\n" .
+                           "  restrained              0\n" .
+                           "  setUIDMode              0\n" .
+                           "}\n";
+
+                $tempVhBlock = "/tmp/vhblock_unsuspend_" . uniqid();
+                file_put_contents($tempVhBlock, $vhBlock);
+
+                $appendProc = new Process(['bash', '-c', "cat {$tempVhBlock} >> {$httpdConf} && rm -f {$tempVhBlock}"]);
+                $appendProc->run();
+            }
+
+            // 7. Flush OLS tmp/vhost cache and reload
+            (new Process(['sudo', 'rm', '-rf', '/tmp/lshttpd/']))->run();
+            $proc = new Process(['sudo', '/usr/local/lsws/bin/lswsctrl', 'restart']);
+            $proc->setTimeout(30);
             $proc->run();
         } catch (\Exception $e) {
-            // Dev/WSL environment silent failover
+            return $this->errorResponse('Unsuspend failed: ' . $e->getMessage());
         }
 
         $account->update(['status' => 'active']);

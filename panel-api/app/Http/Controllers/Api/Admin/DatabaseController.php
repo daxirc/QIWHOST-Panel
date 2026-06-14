@@ -74,13 +74,27 @@ class DatabaseController extends Controller
         }
 
         try {
-            $sql = "CREATE DATABASE IF NOT EXISTS `{$fullDbName}`; " .
-                   "CREATE USER IF NOT EXISTS '{$fullDbUser}'@'localhost' IDENTIFIED BY '{$validated['database_password']}'; " .
-                   "GRANT ALL PRIVILEGES ON `{$fullDbName}`.* TO '{$fullDbUser}'@'localhost'; " .
-                   "FLUSH PRIVILEGES;";
+            // Use PDO with the Laravel DB credentials (which have root/admin access)
+            $pdo = new \PDO(
+                "mysql:host=" . config('database.connections.mysql.host', '127.0.0.1') . ";port=" . config('database.connections.mysql.port', '3306'),
+                config('database.connections.mysql.username', 'root'),
+                config('database.connections.mysql.password', '')
+            );
+            $pdo->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
 
-            $this->runMysql($sql);
-        } catch (\Exception $e) {}
+            // Create database
+            $pdo->exec("CREATE DATABASE IF NOT EXISTS `{$fullDbName}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+
+            // Create user
+            $quotedPass = $pdo->quote($validated['database_password']);
+            $pdo->exec("CREATE USER IF NOT EXISTS '{$fullDbUser}'@'localhost' IDENTIFIED BY {$quotedPass}");
+
+            // Grant privileges
+            $pdo->exec("GRANT ALL PRIVILEGES ON `{$fullDbName}`.* TO '{$fullDbUser}'@'localhost'");
+            $pdo->exec("FLUSH PRIVILEGES");
+        } catch (\Exception $e) {
+            return $this->errorResponse('Failed to create MySQL database: ' . $e->getMessage());
+        }
 
         // Save Database record
         $dbEntry = Database::create([
@@ -94,7 +108,7 @@ class DatabaseController extends Controller
         DatabaseUser::create([
             'hosting_account_id' => $validated['hosting_account_id'],
             'username' => $validated['database_username'],
-            'password_encrypted' => $validated['database_password'], // auto-encrypted via cast
+            'password_encrypted' => $validated['database_password'],
             'host' => 'localhost',
         ]);
 
@@ -124,9 +138,11 @@ class DatabaseController extends Controller
         $fullDbName = $prefix . '_' . $database->database_name;
 
         try {
-            $sql = "DROP DATABASE IF EXISTS `{$fullDbName}`;";
-            $this->runMysql($sql);
-        } catch (\Exception $e) {}
+            $pdo = $this->getPdo();
+            $pdo->exec("DROP DATABASE IF EXISTS `{$fullDbName}`");
+        } catch (\Exception $e) {
+            \Log::warning("Failed to drop MySQL database {$fullDbName}: " . $e->getMessage());
+        }
 
         $database->delete();
 
@@ -155,17 +171,19 @@ class DatabaseController extends Controller
         $fullDbUser = $db->database_name_prefix . '_' . $validated['username'];
 
         try {
-            $sql = "CREATE USER IF NOT EXISTS '{$fullDbUser}'@'localhost' IDENTIFIED BY '{$validated['password']}'; " .
-                   "GRANT ALL PRIVILEGES ON `{$fullDbName}`.* TO '{$fullDbUser}'@'localhost'; " .
-                   "FLUSH PRIVILEGES;";
-
-            $this->runMysql($sql);
-        } catch (\Exception $e) {}
+            $pdo = $this->getPdo();
+            $quotedPass = $pdo->quote($validated['password']);
+            $pdo->exec("CREATE USER IF NOT EXISTS '{$fullDbUser}'@'localhost' IDENTIFIED BY {$quotedPass}");
+            $pdo->exec("GRANT ALL PRIVILEGES ON `{$fullDbName}`.* TO '{$fullDbUser}'@'localhost'");
+            $pdo->exec("FLUSH PRIVILEGES");
+        } catch (\Exception $e) {
+            return $this->errorResponse('Failed to create MySQL user: ' . $e->getMessage());
+        }
 
         $user = DatabaseUser::create([
             'hosting_account_id' => $db->hosting_account_id,
             'username' => $validated['username'],
-            'password_encrypted' => $validated['password'], // auto-encrypted via cast
+            'password_encrypted' => $validated['password'],
             'host' => 'localhost',
         ]);
 
@@ -181,12 +199,13 @@ class DatabaseController extends Controller
         $fullDbUser = $db->database_name_prefix . '_' . $user->username;
 
         try {
-            $sql = "REVOKE ALL PRIVILEGES ON `{$fullDbName}`.* FROM '{$fullDbUser}'@'localhost'; " .
-                   "DROP USER IF EXISTS '{$fullDbUser}'@'localhost'; " .
-                   "FLUSH PRIVILEGES;";
-
-            $this->runMysql($sql);
-        } catch (\Exception $e) {}
+            $pdo = $this->getPdo();
+            $pdo->exec("REVOKE ALL PRIVILEGES ON `{$fullDbName}`.* FROM '{$fullDbUser}'@'localhost'");
+            $pdo->exec("DROP USER IF EXISTS '{$fullDbUser}'@'localhost'");
+            $pdo->exec("FLUSH PRIVILEGES");
+        } catch (\Exception $e) {
+            \Log::warning("Failed to drop MySQL user {$fullDbUser}: " . $e->getMessage());
+        }
 
         $user->delete();
 
@@ -205,13 +224,16 @@ class DatabaseController extends Controller
         $fullDbUser = $account->system_username . '_' . $user->username;
 
         try {
-            $sql = "ALTER USER '{$fullDbUser}'@'localhost' IDENTIFIED BY '{$validated['password']}'; " .
-                   "FLUSH PRIVILEGES;";
-            $this->runMysql($sql);
-        } catch (\Exception $e) {}
+            $pdo = $this->getPdo();
+            $quotedPass = $pdo->quote($validated['password']);
+            $pdo->exec("ALTER USER '{$fullDbUser}'@'localhost' IDENTIFIED BY {$quotedPass}");
+            $pdo->exec("FLUSH PRIVILEGES");
+        } catch (\Exception $e) {
+            return $this->errorResponse('Failed to update MySQL user password: ' . $e->getMessage());
+        }
 
         $user->update([
-            'password_encrypted' => $validated['password'] // auto-encrypted via cast
+            'password_encrypted' => $validated['password']
         ]);
 
         return $this->successResponse(null, 'Database user password updated successfully.');
@@ -253,12 +275,18 @@ class DatabaseController extends Controller
         }
     }
 
-    private function runMysql($sql)
+    /**
+     * Get a PDO connection for MySQL admin operations.
+     * Uses the Laravel database credentials which have GRANT privileges.
+     */
+    private function getPdo()
     {
-        $rootPass = env('DB_ROOT_PASSWORD');
-        $cmd = $rootPass ? ['mysql', '-u', 'root', "-p{$rootPass}", '-e', $sql] : ['mysql', '-u', 'root', '-e', $sql];
-        $process = new Process($cmd);
-        $process->run();
-        return $process;
+        $pdo = new \PDO(
+            "mysql:host=" . config('database.connections.mysql.host', '127.0.0.1') . ";port=" . config('database.connections.mysql.port', '3306'),
+            config('database.connections.mysql.username', 'root'),
+            config('database.connections.mysql.password', '')
+        );
+        $pdo->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
+        return $pdo;
     }
 }

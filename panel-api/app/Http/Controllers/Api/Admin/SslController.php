@@ -140,21 +140,39 @@ class SslController extends Controller
         }
         
         $username = $domain->hostingAccount->system_username;
+        $webroot = "/home/{$username}/public_html";
+
+        // Pre-create .well-known/acme-challenge directory with proper permissions
+        $acmeDir = "{$webroot}/.well-known/acme-challenge";
+        (new Process(['sudo', 'mkdir', '-p', $acmeDir]))->run();
+        (new Process(['sudo', 'chown', '-R', "{$username}:www-data", "{$webroot}/.well-known"]))->run();
+        (new Process(['sudo', 'chmod', '-R', '755', "{$webroot}/.well-known"]))->run();
+
+        // Build domain args — only include www if it points to this server
+        $domainArgs = ['-d', $domain->domain];
+        $serverIp = $this->getServerIp();
+        $wwwIp = $validationData['data']['www_ip'] ?? null;
+        if ($wwwIp && $wwwIp === $serverIp) {
+            $domainArgs[] = '-d';
+            $domainArgs[] = 'www.' . $domain->domain;
+        }
 
         // Run certbot securely using Process
-        $process = new Process([
-            'sudo', 'certbot', 'certonly', '--webroot',
-            '-w', "/home/{$username}/public_html",
-            '-d', $domain->domain,
-            '-d', "www.{$domain->domain}",
-            '--email', 'admin@qiwhost.com',
-            '--agree-tos', '--non-interactive'
-        ]);
+        $certbotCmd = array_merge(
+            ['sudo', 'certbot', 'certonly', '--webroot',
+             '-w', $webroot],
+            $domainArgs,
+            ['--email', 'admin@qiwhost.com',
+             '--agree-tos', '--non-interactive',
+             '--preferred-challenges', 'http']
+        );
+
+        $process = new Process($certbotCmd);
         $process->setTimeout(120);
         $process->run();
         
         if ($process->isSuccessful() || env('APP_ENV') === 'local') {
-            // Update OLS vhost / databases
+            // Update database records
             SslCertificate::updateOrCreate(
                 ['domain' => $domain->domain],
                 [
@@ -170,15 +188,65 @@ class SslController extends Controller
 
             $domain->update(['is_secure_with_ssl' => true]);
 
+            // Configure OLS for HTTPS
+            $this->configureOlsSsl($domain->domain);
+
             return response()->json([
                 'success' => true, 
                 'message' => 'SSL certificate installed successfully via Let\'s Encrypt!'
             ]);
         }
         
+        $errorOutput = $process->getErrorOutput() ?: $process->getOutput();
         return response()->json([
             'success' => false, 
-            'message' => 'SSL installation failed: ' . $process->getErrorOutput()
+            'message' => 'SSL installation failed: ' . $errorOutput
         ], 500);
+    }
+
+    /**
+     * Configure OpenLiteSpeed for SSL:
+     * 1. Add vhssl block to the vhost config
+     * 2. Create or update SSL listener on port 443  
+     * 3. Open firewall port 443
+     * 4. Restart OLS to apply changes
+     */
+    private function configureOlsSsl(string $domain): void
+    {
+        $certPath = "/etc/letsencrypt/live/{$domain}";
+        $configFile = '/usr/local/lsws/conf/httpd_config.conf';
+        $vhostConfFile = "/usr/local/lsws/conf/vhosts/{$domain}/vhconf.conf";
+
+        // 1. Add vhssl block to vhost config
+        $checkVhssl = new Process(['sudo', 'grep', '-c', 'vhssl', $vhostConfFile]);
+        $checkVhssl->run();
+        if (((int) trim($checkVhssl->getOutput())) === 0) {
+            $sslBlock = "\nvhssl  {\n  keyFile                 {$certPath}/privkey.pem\n  certFile                {$certPath}/fullchain.pem\n  certChain               1\n  clientVerify            0\n}\n";
+            (new Process(['sudo', 'bash', '-c', "echo '{$sslBlock}' >> {$vhostConfFile}"]))->run();
+        }
+
+        // 2. Check if SSL listener exists on port 443
+        $checkListener = new Process(['sudo', 'grep', '-c', 'listener SSL', $configFile]);
+        $checkListener->run();
+        if (((int) trim($checkListener->getOutput())) === 0) {
+            $sslListener = "\nlistener SSL {\n  address                  *:443\n  secure                   1\n  keyFile                  {$certPath}/privkey.pem\n  certFile                 {$certPath}/fullchain.pem\n  certChain                1\n  map                      {$domain} {$domain}\n}\n";
+            (new Process(['sudo', 'bash', '-c', "echo '{$sslListener}' >> {$configFile}"]))->run();
+        } else {
+            // Check if this domain is mapped in the existing SSL listener
+            $checkMap = new Process(['sudo', 'bash', '-c', "sed -n '/listener SSL/,/}/p' {$configFile} | grep -c '{$domain}'"]);
+            $checkMap->run();
+            if (((int) trim($checkMap->getOutput())) === 0) {
+                (new Process(['sudo', 'sed', '-i', "/listener SSL {/a\\  map                      {$domain} {$domain}", $configFile]))->run();
+            }
+        }
+
+        // 3. Open port 443 in UFW (idempotent)
+        (new Process(['sudo', 'ufw', 'allow', '443/tcp']))->run();
+
+        // 4. Flush OLS cache and full restart
+        (new Process(['sudo', 'rm', '-rf', '/tmp/lshttpd/']))->run();
+        $restart = new Process(['sudo', '/usr/local/lsws/bin/lswsctrl', 'restart']);
+        $restart->setTimeout(30);
+        $restart->run();
     }
 }

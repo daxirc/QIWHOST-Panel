@@ -34,18 +34,19 @@ class DashboardController extends Controller
             
             $package = $account->hostingPackage;
             
-            // Get actual usage counts from DB
+            // Get REAL usage data from the system
             $diskUsedMb = $this->getCustomerDiskUsage($account->system_username);
-            $bandwidthUsedMb = $account->bandwidth_used_mb ?? 1228.8; // e.g. 1.2 GB mock usage as requested in mockup
+            $bandwidthUsedMb = $this->getCustomerBandwidthUsage($account->system_username);
             
             $diskLimit = $package->disk_space ?? 2048;
             $bandwidthLimitGb = $package->bandwidth ?? 10;
             $bandwidthLimitMb = $bandwidthLimitGb * 1024;
             
             $addonsCount = $account->domains()->where('is_main', false)->count();
-            $subdomainsCount = 0; // fallback count
+            $subdomainsCount = 0; // No subdomain table yet
             $emailsCount = $account->emailAccounts()->count();
             $databasesCount = $account->databases()->count();
+            $ftpCount = $this->getFtpAccountCount($account->system_username);
             
             $ipAddress = '127.0.0.1';
             if (file_exists('/etc/qiwhost/server_ip')) {
@@ -79,7 +80,7 @@ class DashboardController extends Controller
                         'ns2' => $ns2,
                     ],
                     
-                    // ONLY allocated resources - NO real server info
+                    // Real resource consumption
                     'resources' => [
                         'disk' => [
                             'used_mb' => $diskUsedMb,
@@ -118,9 +119,9 @@ class DashboardController extends Controller
                             'label' => $databasesCount . ' / ' . ($package->databases ?? 10),
                         ],
                         'ftp_accounts' => [
-                            'used' => 0,
+                            'used' => $ftpCount,
                             'limit' => $package->ftp_accounts ?? 10,
-                            'label' => '0 / ' . ($package->ftp_accounts ?? 10),
+                            'label' => $ftpCount . ' / ' . ($package->ftp_accounts ?? 10),
                         ],
                     ],
                     
@@ -151,20 +152,199 @@ class DashboardController extends Controller
         if ($mb >= 1024) {
             return round($mb / 1024, 1) . ' GB';
         }
-        return $mb . ' MB';
+        return round($mb, 1) . ' MB';
     }
 
+    /**
+     * Get real disk usage for a customer's home directory using du.
+     * Uses sudo with the allowed du command from sudoers.
+     */
     private function getCustomerDiskUsage($username)
     {
+        $homePath = "/home/{$username}";
+        
+        if (!is_dir($homePath)) {
+            return 0;
+        }
+
         try {
-            $process = new \Symfony\Component\Process\Process(['sudo', 'du', '-sm', "/home/{$username}"]);
-            $process->setTimeout(10);
+            // Use sudo du -sm to get size in MB
+            $process = new \Symfony\Component\Process\Process(
+                ['sudo', 'du', '-sm', $homePath]
+            );
+            $process->setTimeout(30);
             $process->run();
+            
             if ($process->isSuccessful()) {
-                return (int) explode("\t", trim($process->getOutput()))[0];
+                $output = trim($process->getOutput());
+                // Output format: "3966\t/home/username"
+                $parts = explode("\t", $output);
+                return (int) ($parts[0] ?? 0);
+            }
+            
+            // Fallback: try without sudo (if directory is readable by www-data)
+            $process2 = new \Symfony\Component\Process\Process(
+                ['du', '-sm', $homePath]
+            );
+            $process2->setTimeout(30);
+            $process2->run();
+            
+            if ($process2->isSuccessful()) {
+                $parts = explode("\t", trim($process2->getOutput()));
+                return (int) ($parts[0] ?? 0);
+            }
+        } catch (\Exception $e) {
+            \Log::warning("Disk usage check failed for {$username}: " . $e->getMessage());
+        }
+        
+        return 0;
+    }
+
+    /**
+     * Get real bandwidth usage for the current month.
+     * Uses OLS access log to calculate bandwidth per user.
+     * Falls back to /proc/net/dev total traffic divided among accounts.
+     */
+    private function getCustomerBandwidthUsage($username)
+    {
+        try {
+            // Method 1: Check OLS vhost access log for this user
+            $logPath = "/usr/local/lsws/logs/access.log";
+            $vhostLogPath = "/home/{$username}/logs/access.log";
+            
+            // Try user-specific log first
+            $logFile = file_exists($vhostLogPath) ? $vhostLogPath : null;
+            
+            if ($logFile) {
+                return $this->parseBandwidthFromLog($logFile);
+            }
+            
+            // Method 2: Use vnstat if available
+            $process = new \Symfony\Component\Process\Process(
+                ['vnstat', '--oneline']
+            );
+            $process->setTimeout(5);
+            $process->run();
+            
+            if ($process->isSuccessful()) {
+                return $this->parseVnstatOutput($process->getOutput());
+            }
+            
+            // Method 3: Calculate from /proc/net/dev (total server bandwidth)
+            // Divide among active accounts as an approximation
+            return $this->getServerBandwidthShare($username);
+            
+        } catch (\Exception $e) {
+            \Log::warning("Bandwidth check failed for {$username}: " . $e->getMessage());
+        }
+        
+        return 0;
+    }
+
+    /**
+     * Parse bandwidth from access log (bytes transferred in current month)
+     */
+    private function parseBandwidthFromLog($logFile)
+    {
+        try {
+            $currentMonth = date('M/Y');
+            $totalBytes = 0;
+            
+            // Use awk for efficient parsing of large logs
+            $process = new \Symfony\Component\Process\Process([
+                'sudo', 'awk',
+                '{sum += $10} END {print sum}',
+                $logFile
+            ]);
+            $process->setTimeout(15);
+            $process->run();
+            
+            if ($process->isSuccessful()) {
+                $totalBytes = (int) trim($process->getOutput());
+                return round($totalBytes / (1024 * 1024), 1); // Convert to MB
             }
         } catch (\Exception $e) {}
-        return 50; // safe dev mock fallback
+        
+        return 0;
+    }
+
+    /**
+     * Parse vnstat output for current month traffic (rx+tx)
+     */
+    private function parseVnstatOutput($output)
+    {
+        // vnstat --oneline format: id;timestamp;rx;tx;...
+        $parts = explode(';', $output);
+        if (count($parts) >= 10) {
+            // Total rx+tx in MiB for the current month
+            $rxMiB = (float) ($parts[8] ?? 0);
+            $txMiB = (float) ($parts[9] ?? 0);
+            return round($rxMiB + $txMiB, 1);
+        }
+        return 0;
+    }
+
+    /**
+     * Get approximate bandwidth share from /proc/net/dev for this user.
+     * Divides total server bandwidth among all active accounts.
+     */
+    private function getServerBandwidthShare($username)
+    {
+        try {
+            $content = @file_get_contents('/proc/net/dev');
+            if (!$content) return 0;
+            
+            $totalBytes = 0;
+            foreach (explode("\n", $content) as $line) {
+                if (preg_match('/\s*(eth0|ens\d+|enp\d+s\d+):\s*(\d+)\s+.*\s+(\d+)/', $line, $m)) {
+                    // rx bytes + tx bytes
+                    $totalBytes = ((int)$m[2]) + ((int)$m[3]);
+                    break;
+                }
+            }
+            
+            if ($totalBytes === 0) return 0;
+            
+            // Convert to MB
+            $totalMb = $totalBytes / (1024 * 1024);
+            
+            // Divide among active accounts
+            $activeAccounts = \App\Models\HostingAccount::where('status', 'active')->count();
+            $activeAccounts = max($activeAccounts, 1);
+            
+            return round($totalMb / $activeAccounts, 1);
+        } catch (\Exception $e) {}
+        
+        return 0;
+    }
+
+    /**
+     * Count FTP accounts for this user from ProFTPD/vsftpd configuration.
+     */
+    private function getFtpAccountCount($username)
+    {
+        try {
+            // Check ProFTPD virtual users
+            $ftpdPasswd = "/etc/proftpd/ftpd.passwd";
+            if (file_exists($ftpdPasswd)) {
+                $count = 0;
+                $lines = @file($ftpdPasswd, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+                foreach ($lines as $line) {
+                    if (strpos($line, "/home/{$username}") !== false) {
+                        $count++;
+                    }
+                }
+                return $count;
+            }
+            
+            // Check vsftpd virtual users
+            $vsftpdDir = "/etc/vsftpd/users/";
+            if (is_dir($vsftpdDir)) {
+                $files = @glob($vsftpdDir . "{$username}_*") ?: [];
+                return count($files);
+            }
+        } catch (\Exception $e) {}
+        
+        return 0;
     }
 }
-

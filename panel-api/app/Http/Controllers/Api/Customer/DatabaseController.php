@@ -51,6 +51,9 @@ class DatabaseController extends Controller
                     }
                 } catch (\Exception $e) {}
 
+                // Get database users for this account
+                $dbUsers = DatabaseUser::where('hosting_account_id', $account->id)->get();
+
                 $results[] = [
                     'id' => $db->id,
                     'database_name' => $db->database_name,
@@ -58,6 +61,14 @@ class DatabaseController extends Controller
                     'connection_host' => $db->connection_host,
                     'size_mb' => $size,
                     'created_at' => $db->created_at->toDateTimeString(),
+                    'users' => $dbUsers->map(function ($u) use ($db) {
+                        return [
+                            'id' => $u->id,
+                            'username' => $u->username,
+                            'full_username' => $db->database_name_prefix . '_' . $u->username,
+                            'host' => $u->host,
+                        ];
+                    })->values(),
                 ];
             }
 
@@ -86,7 +97,6 @@ class DatabaseController extends Controller
                 'database_password' => 'required|string|min:6',
             ]);
 
-            $adminController = new AdminPhpManagerController(); // wait, let's use AdminDatabaseController
             $adminDb = new AdminDatabaseController();
             
             $request->merge(['hosting_account_id' => $account->id]);
@@ -200,15 +210,25 @@ class DatabaseController extends Controller
             // Use the database user's actual stored password
             $password = $dbUser ? $dbUser->password_encrypted : 'ali12345';
             
-            // Generate a secure token and cache it for 60 seconds
+            // Generate a secure token and write credentials to a temp file
+            // (readable by PMA's signon.php script)
             $token = bin2hex(random_bytes(16));
-            Cache::put('pma_sso_' . $token, [
+            $cacheFile = '/tmp/pma_sso_' . $token;
+            file_put_contents($cacheFile, json_encode([
                 'username' => $username,
-                'password' => $password
-            ], 60);
+                'password' => $password,
+            ]));
+            chmod($cacheFile, 0644);
 
-            // SSO Redirect URL linking to the public proxy handler
-            $ssoUrl = "/phpmyadmin-sso.php?token={$token}";
+            // Auto-expire: clean up old SSO tokens (older than 2 minutes)
+            foreach (glob('/tmp/pma_sso_*') as $file) {
+                if (filemtime($file) < time() - 120 && $file !== $cacheFile) {
+                    @unlink($file);
+                }
+            }
+
+            // SSO URL points to PMA's signon script served directly by OLS
+            $ssoUrl = "/phpmyadmin/signon.php?token={$token}";
 
             return $this->successResponse([
                 'sso_url' => $ssoUrl,

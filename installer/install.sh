@@ -880,7 +880,71 @@ run_cmd "echo '0 3 * * * www-data cd /opt/qiwhost/panel-api && php8.3 artisan se
 run_cmd "echo '0 0 * * * root /snap/bin/certbot renew --quiet && /usr/local/lsws/bin/lswsctrl reload' > /etc/cron.d/qiwhost-ssl-renewal" "Adding daily SSL renewal cronjob"
 
 # ==============================================================================
-# STEP 18: Configure Firewall (UFW)
+# STEP 18: Install & Configure BIND9 DNS Server
+# ==============================================================================
+step_header "Installing BIND9 Authoritative DNS Server"
+
+run_cmd "apt-get install -y bind9 bind9-utils bind9-dnsutils" "Installing BIND9 DNS server packages"
+
+# Create zone directory
+run_cmd "mkdir -p /etc/bind/zones && chown bind:bind /etc/bind/zones" "Creating BIND zone files directory"
+
+# Configure BIND options for authoritative-only mode (no recursion)
+cat > /tmp/named_conf_options << 'BINDOPTS'
+options {
+    directory "/var/cache/bind";
+
+    // Authoritative-only DNS server - no recursion
+    recursion no;
+    allow-recursion { none; };
+    allow-transfer { none; };
+
+    // Listen on all interfaces for DNS queries
+    listen-on { any; };
+    listen-on-v6 { any; };
+
+    // DNSSEC validation (for forwarded queries if any)
+    dnssec-validation auto;
+
+    // Rate limiting to prevent DNS amplification attacks
+    rate-limit {
+        responses-per-second 10;
+        window 5;
+    };
+};
+BINDOPTS
+run_cmd "mv /tmp/named_conf_options /etc/bind/named.conf.options" "Writing BIND9 secure configuration"
+run_cmd "chown root:bind /etc/bind/named.conf.options" "Setting BIND config ownership"
+
+# Initialize empty named.conf.local (zones will be added dynamically by the panel)
+if [ ! -f /etc/bind/named.conf.local ] || ! grep -q "QIWHOST" /etc/bind/named.conf.local; then
+    cat > /tmp/named_conf_local << 'BINDLOCAL'
+// QIWHOST Panel - Dynamic Zone Declarations
+// Zones are automatically added/removed by the panel's DnsZoneSyncService
+BINDLOCAL
+    run_cmd "mv /tmp/named_conf_local /etc/bind/named.conf.local" "Initializing BIND local zone config"
+    run_cmd "chown root:bind /etc/bind/named.conf.local" "Setting local zone config ownership"
+fi
+
+# Allow www-data to manage BIND zones via sudoers
+cat >> /tmp/qiwhost_sudoers_bind << 'BINDSUDO'
+# BIND9 DNS Management
+www-data ALL=(ALL) NOPASSWD: /usr/sbin/rndc reload
+www-data ALL=(ALL) NOPASSWD: /usr/sbin/rndc reload *
+www-data ALL=(ALL) NOPASSWD: /bin/systemctl reload named
+www-data ALL=(ALL) NOPASSWD: /bin/systemctl restart named
+BINDSUDO
+run_cmd "cat /tmp/qiwhost_sudoers_bind >> /etc/sudoers.d/qiwhost" "Adding BIND9 sudoers rules"
+rm -f /tmp/qiwhost_sudoers_bind
+
+# Enable and start BIND9
+run_cmd "systemctl enable named" "Enabling BIND9 DNS service on boot"
+run_cmd "systemctl restart named" "Starting BIND9 DNS service"
+
+log_success "BIND9 authoritative DNS server configured successfully"
+
+# ==============================================================================
+# STEP 19: Configure Firewall (UFW)
 # ==============================================================================
 step_header "Securing Cluster Network Firewall (UFW)"
 
@@ -895,6 +959,10 @@ run_cmd "ufw allow 443/tcp comment 'HTTPS'" "Opening HTTPS Port (443)"
 run_cmd "ufw allow 8443/tcp comment 'QIWHOST Frontend'" "Opening Frontend Service Port (8443)"
 run_cmd "ufw allow 8080/tcp comment 'QIWHOST API'" "Opening Backend API Port (8080)"
 run_cmd "ufw allow 8025/tcp comment 'Roundcube Webmail'" "Opening Webmail Port (8025)"
+
+# DNS Ports
+run_cmd "ufw allow 53/tcp comment 'DNS TCP'" "Opening DNS Port (53/TCP)"
+run_cmd "ufw allow 53/udp comment 'DNS UDP'" "Opening DNS Port (53/UDP)"
 
 # Mail Ports permissions
 run_cmd "ufw allow 25/tcp comment 'SMTP'" "Opening SMTP Port (25)"

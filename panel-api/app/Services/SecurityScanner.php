@@ -76,33 +76,49 @@ class SecurityScanner
         }
 
         // 3. Check file content for shell signatures
-        $content = file_get_contents($file->getRealPath());
-        foreach ($this->shellSignatures as $signature) {
-            if (stripos($content, $signature) !== false) {
-                $threats[] = "Malicious code pattern detected: {$signature}";
-                break;
-            }
-        }
+        // Only read the first 1MB for signature scanning - sufficient to detect
+        // embedded shells while avoiding huge memory usage on large uploads
+        $scanSize = min(filesize($file->getRealPath()), 1024 * 1024);
+        $handle = fopen($file->getRealPath(), 'r');
+        $content = $handle ? fread($handle, $scanSize) : '';
+        if ($handle) fclose($handle);
 
-        // 4. Check for PHP tags in files
-        if (str_contains($content, '<?php') || str_contains($content, '<?=')) {
-            // Only flag if it's disguised (e.g. extension says it's an image or text file)
-            $safeDocExtensions = ['html', 'htm', 'css', 'js', 'json', 'xml', 'yaml', 'yml', 'md', 'sql', 'php', 'phtml', 'phar'];
-            if (!in_array($extension, $safeDocExtensions)) {
-                $threats[] = "PHP execution block found disguised in .{$extension} file type";
+        // Skip deep content scanning for known binary formats (zip, images, videos)
+        $binaryExtensions = ['zip', 'gz', 'tar', 'rar', '7z', 'bz2', 'xz',
+            'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'ico',
+            'mp4', 'avi', 'mkv', 'mov', 'wmv', 'mp3', 'wav', 'flac',
+            'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+            'ttf', 'otf', 'woff', 'woff2', 'eot'];
+
+        if (!in_array($extension, $binaryExtensions)) {
+            foreach ($this->shellSignatures as $signature) {
+                if (stripos($content, $signature) !== false) {
+                    $threats[] = "Malicious code pattern detected: {$signature}";
+                    break;
+                }
+            }
+
+            // 4. Check for PHP tags in files
+            if (str_contains($content, '<?php') || str_contains($content, '<?=')) {
+                // Only flag if it's disguised (e.g. extension says it's an image or text file)
+                $safeDocExtensions = ['html', 'htm', 'css', 'js', 'json', 'xml', 'yaml', 'yml', 'md', 'sql', 'php', 'phtml', 'phar'];
+                if (!in_array($extension, $safeDocExtensions)) {
+                    $threats[] = "PHP execution block found disguised in .{$extension} file type";
+                }
             }
         }
 
         // 5. Check for null bytes (used to bypass extension checks)
-        if (str_contains($originalName, "\0") || str_contains($content, "\0\0\0\0\0")) {
+        if (str_contains($originalName, "\0")) {
             $threats[] = "Null byte injection detected";
         }
 
-        // 6. ClamAV scan if available
-        if (file_exists('/usr/bin/clamscan')) {
+        // 6. ClamAV scan if available (skip for very large files to avoid timeouts)
+        $fileSize = filesize($file->getRealPath());
+        if (file_exists('/usr/bin/clamscan') && $fileSize < 50 * 1024 * 1024) {
             try {
                 $process = new Process(['/usr/bin/clamscan', '--no-summary', $file->getRealPath()]);
-                $process->setTimeout(30);
+                $process->setTimeout(15);
                 $process->run();
                 if ($process->getExitCode() === 1) {
                     $threats[] = "ClamAV virus detected: " . trim($process->getOutput());

@@ -101,8 +101,9 @@ export default function CustomerDatabases() {
     },
     onSuccess: (data) => {
       if (data?.sso_url) {
-        const serverIp = process.env.NEXT_PUBLIC_SERVER_IP || window.location.hostname;
-        window.open(`http://${serverIp}${data.sso_url}`, "_blank");
+        // Open PMA on the same host/protocol/port the user is currently on
+        const baseUrl = `${window.location.protocol}//${window.location.host}`;
+        window.open(`${baseUrl}${data.sso_url}`, "_blank");
       }
     },
     onError: (err: any) => {
@@ -281,15 +282,23 @@ export default function CustomerDatabases() {
                         <td className="px-6 py-4 font-mono font-bold text-gray-900">
                           {db.database_name_prefix}_{db.database_name}
                         </td>
-                        <td className="px-6 py-4 text-gray-600 flex flex-col gap-1">
-                          <span className="font-mono text-gray-800">{db.database_name_prefix}_user</span>
-                          <button
-                            onClick={() => setSelectedUserForPass({ id: db.id, username: `${db.database_name_prefix}_user` })}
-                            className="text-xs text-primary hover:underline text-left flex items-center gap-1 font-medium"
-                          >
-                            <KeyRound className="w-3 h-3" />
-                            <span>Change Password</span>
-                          </button>
+                        <td className="px-6 py-4 text-gray-600">
+                          <div className="flex flex-col gap-1.5">
+                            {db.users && db.users.length > 0 ? db.users.map((u: any) => (
+                              <div key={u.id} className="flex flex-col gap-0.5">
+                                <span className="font-mono text-gray-800">{u.full_username}</span>
+                                <button
+                                  onClick={() => setSelectedUserForPass({ id: u.id, username: u.full_username })}
+                                  className="text-xs text-primary hover:underline text-left flex items-center gap-1 font-medium"
+                                >
+                                  <KeyRound className="w-3 h-3" />
+                                  <span>Change Password</span>
+                                </button>
+                              </div>
+                            )) : (
+                              <span className="font-mono text-gray-400 text-xs">No users</span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-6 py-4 text-xs font-mono text-gray-500">
                           {db.connection_host}

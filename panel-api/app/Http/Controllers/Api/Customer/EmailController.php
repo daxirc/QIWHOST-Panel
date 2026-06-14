@@ -71,15 +71,27 @@ class EmailController extends Controller
             }
 
             try {
-                // Secure maildir creation using Symfony Process
-                $process = new Process([
-                    'sudo',
-                    'maildirmake',
-                    "/home/{$account->system_username}/Maildir/.{$validated['local_part']}"
-                ]);
-                $process->run();
+                // Create maildir at /var/mail/vhosts/{domain}/{local_part}/
+                $maildir = "/var/mail/vhosts/{$domain}/{$validated['local_part']}";
+                
+                $mkdir = new Process(['sudo', 'mkdir', '-p', $maildir]);
+                $mkdir->run();
+                
+                // Create Maildir sub-structure
+                foreach (['cur', 'new', 'tmp'] as $sub) {
+                    $mkSub = new Process(['sudo', 'mkdir', '-p', "{$maildir}/{$sub}"]);
+                    $mkSub->run();
+                }
+                
+                // Set ownership to vmail user (uid/gid 5000)
+                $chown = new Process(['sudo', 'chown', '-R', 'vmail:vmail', "/var/mail/vhosts/{$domain}"]);
+                $chown->run();
+                
+                $chmod = new Process(['sudo', 'chmod', '-R', '770', "/var/mail/vhosts/{$domain}"]);
+                $chmod->run();
             } catch (\Exception $e) {
-                // Local simulation
+                // Log but don't fail - DB record is more important
+                \Log::warning("Maildir creation warning: " . $e->getMessage());
             }
 
             $emailAccount = EmailAccount::create([
@@ -93,6 +105,14 @@ class EmailController extends Controller
                 'active' => true,
                 'smtp_active' => true,
             ]);
+
+            // Reload Postfix to pick up new virtual mailbox
+            try {
+                $reload = new Process(['sudo', 'postfix', 'reload']);
+                $reload->run();
+            } catch (\Exception $e) {
+                \Log::warning("Postfix reload warning: " . $e->getMessage());
+            }
 
             return $this->successResponse($emailAccount, 'Email account created successfully.', 201);
 
@@ -154,19 +174,27 @@ class EmailController extends Controller
             }
 
             try {
-                // Delete maildir securely using array syntax
+                // Delete maildir from /var/mail/vhosts/{domain}/{local_part}
                 $process = new Process([
                     'sudo',
                     'rm',
                     '-rf',
-                    "/home/{$account->system_username}/Maildir/.{$email->local_part}"
+                    "/var/mail/vhosts/{$email->domain}/{$email->local_part}"
                 ]);
                 $process->run();
             } catch (\Exception $e) {
-                // local fallback
+                \Log::warning("Maildir deletion warning: " . $e->getMessage());
             }
 
             $email->delete();
+
+            // Reload Postfix
+            try {
+                $reload = new Process(['sudo', 'postfix', 'reload']);
+                $reload->run();
+            } catch (\Exception $e) {
+                // silent
+            }
 
             return $this->successResponse(null, 'Email account deleted successfully.');
 

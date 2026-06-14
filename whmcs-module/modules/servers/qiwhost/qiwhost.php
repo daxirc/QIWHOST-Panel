@@ -275,7 +275,7 @@ function qiwhost_ClientArea($params) {
                 : $bandwidthUsed . ' MB',
             'username'        => $params['username'],
             'ssoLoginUrl'     => $ssoLoginUrl,
-            'panelUrl'        => $params['serverhttpprefix'] . '://' . $params['serverip'] . ':' . $params['serverport'],
+            'panelUrl'        => $params['serverhttpprefix'] . '://' . (!empty($params['serverhostname']) ? $params['serverhostname'] : $params['serverip']) . ':' . $params['serverport'],
         ],
     ];
 }

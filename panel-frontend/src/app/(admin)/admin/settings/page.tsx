@@ -93,11 +93,23 @@ export default function AdminSettings() {
   const [defCpuLimitPercent, setDefCpuLimitPercent] = useState("25");
   const [defIoLimitMbps, setDefIoLimitMbps] = useState("10");
   const [defProcessLimit, setDefProcessLimit] = useState("20");
-  const [backupRetentionDays, setBackupRetentionDays] = useState("7");
+  const [backupRetentionDays, setBackupRetentionDays] = useState("3");
   const [backupTime, setBackupTime] = useState("02:00");
   const [backupLocation, setBackupLocation] = useState("/home/backups");
   const [wordpressAutoUpdate, setWordpressAutoUpdate] = useState(true);
   const [wordpressAutoUpdatePlugins, setWordpressAutoUpdatePlugins] = useState(true);
+
+  // Remote Backup Server
+  const [remoteBackupHost, setRemoteBackupHost] = useState("");
+  const [remoteBackupPort, setRemoteBackupPort] = useState("22");
+  const [remoteBackupUser, setRemoteBackupUser] = useState("root");
+  const [remoteBackupPassword, setRemoteBackupPassword] = useState("");
+  const [remoteBackupPath, setRemoteBackupPath] = useState("/backups");
+  const [remoteBackupEnabled, setRemoteBackupEnabled] = useState(false);
+  const [remoteBackupPasswordSet, setRemoteBackupPasswordSet] = useState(false);
+  const [autoBackupEnabled, setAutoBackupEnabled] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [testConnectionResult, setTestConnectionResult] = useState<any>(null);
 
   // Server Info
   const [serverInfo, setServerInfo] = useState<any>(null);
@@ -162,13 +174,28 @@ export default function AdminSettings() {
           setDefCpuLimitPercent(data.default_cpu_limit_percent || "25");
           setDefIoLimitMbps(data.default_io_limit_mbps || "10");
           setDefProcessLimit(data.default_process_limit || "20");
-          setBackupRetentionDays(data.backup_retention_days || "7");
+          setBackupRetentionDays(data.backup_retention_days || "3");
           setBackupTime(data.backup_time || "02:00");
           setBackupLocation(data.backup_location || "/home/backups");
           setWordpressAutoUpdate(data.wordpress_auto_update === "1" || data.wordpress_auto_update === true);
           setWordpressAutoUpdatePlugins(data.wordpress_auto_update_plugins === "1" || data.wordpress_auto_update_plugins === true);
         }
       }
+
+      // Load remote backup settings
+      try {
+        const backupRes = await API.get("/admin/settings/backup");
+        if (backupRes.data.success) {
+          const bd = backupRes.data.data;
+          setRemoteBackupHost(bd.backup_remote_host || "");
+          setRemoteBackupPort(bd.backup_remote_port || "22");
+          setRemoteBackupUser(bd.backup_remote_user || "root");
+          setRemoteBackupPath(bd.backup_remote_path || "/backups");
+          setRemoteBackupEnabled(bd.backup_remote_enabled === "1");
+          setAutoBackupEnabled(bd.backup_auto_enabled === "1");
+          setRemoteBackupPasswordSet(bd.backup_remote_password_set || false);
+        }
+      } catch {}
     } catch (err: any) {
       console.error(err);
       setErrorMsg("Failed to retrieve system settings.");
@@ -469,6 +496,15 @@ export default function AdminSettings() {
         >
           <ShieldCheck className="w-4 h-4" />
           SSL Param
+        </button>
+        <button
+          onClick={() => setActiveTab("backup")}
+          className={`pb-3 text-sm border-b-2 transition-all flex items-center gap-2 ${
+            activeTab === "backup" ? "border-primary text-primary" : "border-transparent text-gray-400 hover:text-gray-650"
+          }`}
+        >
+          <HardDrive className="w-4 h-4" />
+          Backup Server
         </button>
       </div>
 
@@ -829,41 +865,6 @@ export default function AdminSettings() {
                       type="number"
                       value={defProcessLimit}
                       onChange={(e) => setDefProcessLimit(e.target.value)}
-                      className="w-full bg-gray-55 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 font-mono"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Backups settings */}
-              <div className="space-y-4 pt-4 border-t border-gray-100">
-                <h4 className="font-bold text-xs text-primary uppercase tracking-wider">Automated Backups Schedules</h4>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-gray-500 block uppercase">Retention Period (Days)</label>
-                    <input
-                      type="number"
-                      value={backupRetentionDays}
-                      onChange={(e) => setBackupRetentionDays(e.target.value)}
-                      className="w-full bg-gray-55 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 font-mono"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-gray-500 block uppercase">Execution Time (Daily)</label>
-                    <input
-                      type="text"
-                      value={backupTime}
-                      onChange={(e) => setBackupTime(e.target.value)}
-                      placeholder="e.g. 02:00"
-                      className="w-full bg-gray-55 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 font-mono"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-gray-500 block uppercase">Backup Directory Location</label>
-                    <input
-                      type="text"
-                      value={backupLocation}
-                      onChange={(e) => setBackupLocation(e.target.value)}
                       className="w-full bg-gray-55 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 font-mono"
                     />
                   </div>
@@ -1328,6 +1329,171 @@ export default function AdminSettings() {
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Backup Server Tab */}
+          {activeTab === "backup" && (
+            <div className="space-y-6">
+              <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                <HardDrive className="w-5 h-5 text-primary" />
+                Remote Backup Server Configuration
+              </h3>
+              <p className="text-sm text-gray-500">Configure your remote VPS for storing backups via SFTP. Backups are retained for the specified number of days and automatically cleaned up.</p>
+
+              {/* Schedule Settings */}
+              <div className="space-y-3">
+                <h4 className="font-bold text-xs text-primary uppercase tracking-wider">Backup Schedule</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-gray-500 block uppercase">Retention Period (Days)</label>
+                    <input
+                      type="number"
+                      value={backupRetentionDays}
+                      onChange={(e) => setBackupRetentionDays(e.target.value)}
+                      className="w-full bg-gray-55 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-gray-500 block uppercase">Daily Execution Time</label>
+                    <input
+                      type="text"
+                      value={backupTime}
+                      onChange={(e) => setBackupTime(e.target.value)}
+                      placeholder="e.g. 02:00"
+                      className="w-full bg-gray-55 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-gray-500 block uppercase">Local Backup Directory</label>
+                    <input
+                      type="text"
+                      value={backupLocation}
+                      onChange={(e) => setBackupLocation(e.target.value)}
+                      className="w-full bg-gray-55 border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Remote Server Config */}
+              <div className="p-5 bg-blue-50/50 border border-blue-100 rounded-xl space-y-4">
+                <h4 className="font-bold text-xs text-blue-700 uppercase tracking-wider">Remote Backup VPS (SFTP Connection)</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-gray-500 block uppercase">Remote Host (IP Address)</label>
+                    <input
+                      type="text"
+                      value={remoteBackupHost}
+                      onChange={(e) => setRemoteBackupHost(e.target.value)}
+                      placeholder="e.g. 192.168.1.100"
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-gray-500 block uppercase">SSH Port</label>
+                    <input
+                      type="number"
+                      value={remoteBackupPort}
+                      onChange={(e) => setRemoteBackupPort(e.target.value)}
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-gray-500 block uppercase">SSH Username</label>
+                    <input
+                      type="text"
+                      value={remoteBackupUser}
+                      onChange={(e) => setRemoteBackupUser(e.target.value)}
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-gray-500 block uppercase">
+                      SSH Password {remoteBackupPasswordSet && <span className="text-green-600 ml-1">(Saved ✓)</span>}
+                    </label>
+                    <input
+                      type="password"
+                      value={remoteBackupPassword}
+                      onChange={(e) => setRemoteBackupPassword(e.target.value)}
+                      placeholder={remoteBackupPasswordSet ? "••••••••  (leave blank to keep)" : "Enter password"}
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 font-mono"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-gray-500 block uppercase">Remote Storage Path</label>
+                    <input
+                      type="text"
+                      value={remoteBackupPath}
+                      onChange={(e) => setRemoteBackupPath(e.target.value)}
+                      placeholder="/backups"
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 font-mono"
+                    />
+                  </div>
+                  <div className="flex items-end gap-5 pb-1">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={remoteBackupEnabled} onChange={(e) => setRemoteBackupEnabled(e.target.checked)} className="rounded" />
+                      <span className="text-xs font-bold text-gray-600">Enable Remote Storage</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={autoBackupEnabled} onChange={(e) => setAutoBackupEnabled(e.target.checked)} className="rounded" />
+                      <span className="text-xs font-bold text-gray-600">Enable Auto Backups</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 pt-2 border-t border-blue-100">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setTestConnectionResult(null);
+                      setTestingConnection(true);
+                      try {
+                        const res = await API.post("/admin/backups/test-connection", {
+                          host: remoteBackupHost, port: parseInt(remoteBackupPort),
+                          user: remoteBackupUser, password: remoteBackupPassword || "placeholder",
+                          path: remoteBackupPath,
+                        });
+                        setTestConnectionResult(res.data.success ? { success: true, message: res.data.message } : { success: false, message: res.data.message });
+                      } catch (err: any) {
+                        setTestConnectionResult({ success: false, message: err.response?.data?.message || "Connection failed" });
+                      } finally { setTestingConnection(false); }
+                    }}
+                    disabled={testingConnection || !remoteBackupHost}
+                    className="px-4 py-2.5 border border-blue-300 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-100 disabled:opacity-50 transition-colors"
+                  >
+                    {testingConnection ? "Testing..." : "🔌 Test Connection"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await API.post("/admin/settings/backup", {
+                          backup_remote_host: remoteBackupHost,
+                          backup_remote_port: remoteBackupPort,
+                          backup_remote_user: remoteBackupUser,
+                          backup_remote_password: remoteBackupPassword || "••••••••",
+                          backup_remote_path: remoteBackupPath,
+                          backup_remote_enabled: remoteBackupEnabled ? "1" : "0",
+                          backup_auto_enabled: autoBackupEnabled ? "1" : "0",
+                        });
+                        setRemoteBackupPasswordSet(true);
+                        setSuccessMsg("Backup server settings saved successfully!");
+                      } catch (err: any) {
+                        setErrorMsg(err.response?.data?.message || "Failed to save backup settings.");
+                      }
+                    }}
+                    className="px-4 py-2.5 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-colors shadow-sm"
+                  >
+                    💾 Save Backup Server Settings
+                  </button>
+                  {testConnectionResult && (
+                    <span className={`text-xs font-bold ${testConnectionResult.success ? "text-green-600" : "text-red-600"}`}>
+                      {testConnectionResult.success ? "✓" : "✗"} {testConnectionResult.message}
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 

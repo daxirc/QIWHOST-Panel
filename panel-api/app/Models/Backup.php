@@ -18,6 +18,7 @@ class Backup extends Model
         'file_path',
         'file_name',
         'size',
+        'storage_type',
         'completed_at',
         'failed_at',
     ];
@@ -25,6 +26,7 @@ class Backup extends Model
     protected $casts = [
         'completed_at' => 'datetime',
         'failed_at' => 'datetime',
+        'size' => 'integer',
     ];
 
     public function hostingAccount(): BelongsTo

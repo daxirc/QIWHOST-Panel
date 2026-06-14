@@ -264,7 +264,7 @@ class SettingsController extends Controller
             'default_cpu_limit_percent' => '25',
             'default_io_limit_mbps' => '10',
             'default_process_limit' => '20',
-            'backup_retention_days' => '7',
+            'backup_retention_days' => '3',
             'backup_time' => '02:00',
             'backup_location' => '/home/backups',
             'wordpress_auto_update' => '1',
@@ -380,4 +380,65 @@ class SettingsController extends Controller
             ],
         ]);
     }
+
+    /**
+     * Get remote backup server configuration.
+     */
+    public function getBackupSettings()
+    {
+        $settings = Setting::where('group', 'backup_remote')->get()->pluck('value', 'key')->toArray();
+
+        $defaults = [
+            'backup_remote_host' => '',
+            'backup_remote_port' => '22',
+            'backup_remote_user' => 'root',
+            'backup_remote_password' => '',
+            'backup_remote_path' => '/backups',
+            'backup_remote_enabled' => '0',
+            'backup_auto_enabled' => '0',
+        ];
+
+        $data = array_merge($defaults, $settings);
+        // Don't send actual password to frontend
+        if (!empty($data['backup_remote_password'])) {
+            $data['backup_remote_password_set'] = true;
+            $data['backup_remote_password'] = '••••••••';
+        } else {
+            $data['backup_remote_password_set'] = false;
+        }
+
+        return $this->successResponse($data, 'Backup settings retrieved.');
+    }
+
+    /**
+     * Save remote backup server configuration.
+     */
+    public function saveBackupSettings(Request $request)
+    {
+        $keys = [
+            'backup_remote_host', 'backup_remote_port', 'backup_remote_user',
+            'backup_remote_path', 'backup_remote_enabled', 'backup_auto_enabled',
+        ];
+
+        $input = $request->only($keys);
+
+        foreach ($input as $key => $value) {
+            Setting::updateOrCreate(
+                ['key' => $key],
+                ['group' => 'backup_remote', 'value' => (string) $value]
+            );
+        }
+
+        // Only update password if a new one is provided (not the masked value)
+        $password = $request->input('backup_remote_password');
+        if ($password && $password !== '••••••••') {
+            Setting::updateOrCreate(
+                ['key' => 'backup_remote_password'],
+                ['group' => 'backup_remote', 'value' => $password]
+            );
+        }
+
+        return $this->getBackupSettings();
+    }
 }
+

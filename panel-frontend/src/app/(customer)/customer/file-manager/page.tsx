@@ -254,7 +254,9 @@ export default function CustomerFileManager() {
   // Extract Mutation
   const extractMutation = useMutation({
     mutationFn: async (payload: any) => {
-      const res = await API.post("/customer/files/extract", payload);
+      const res = await API.post("/customer/files/extract", payload, {
+        timeout: 600000, // 10 min timeout for large archives
+      });
       return res.data;
     },
     onSuccess: () => {
@@ -436,31 +438,101 @@ export default function CustomerFileManager() {
     setUploadFiles(prev => [...prev, ...fresh]);
   };
 
+  // Chunked upload constants
+  const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB per chunk
+  const CHUNK_THRESHOLD = 50 * 1024 * 1024; // Use chunked upload for files > 50MB
+
+  const uploadFileChunked = async (
+    file: File,
+    onProgress: (percent: number) => void
+  ) => {
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
+    // 1. Initialize chunked upload session
+    const initRes = await API.post("/customer/files/upload-chunk-init", {
+      filename: file.name,
+      total_size: file.size,
+      total_chunks: totalChunks,
+      path: currentPath,
+    });
+
+    const uploadId = initRes.data.data.upload_id;
+
+    // 2. Send chunks sequentially
+    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+      const start = chunkIndex * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, file.size);
+      const blob = file.slice(start, end);
+
+      const formData = new FormData();
+      formData.append("chunk", blob, `chunk_${chunkIndex}`);
+      formData.append("upload_id", uploadId);
+      formData.append("chunk_index", String(chunkIndex));
+
+      await API.post("/customer/files/upload-chunk", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: 120000, // 2 min per chunk
+      });
+
+      // Update progress based on chunks completed
+      const percent = Math.round(((chunkIndex + 1) / totalChunks) * 100);
+      onProgress(percent);
+    }
+  };
+
+  const uploadFileDirect = async (
+    file: File,
+    onProgress: (percent: number) => void
+  ) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("path", currentPath);
+
+    await API.post("/customer/files/upload", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: 300000, // 5 min timeout
+      onUploadProgress: (progressEvent) => {
+        if (progressEvent.total && progressEvent.total > 0) {
+          const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          onProgress(Math.min(percent, 100));
+        } else {
+          // Estimate based on loaded bytes vs file size
+          const percent = Math.round((progressEvent.loaded * 100) / file.size);
+          onProgress(Math.min(percent, 99));
+        }
+      },
+    });
+    onProgress(100);
+  };
+
   const startFilesUploading = async () => {
     const copy = [...uploadFiles];
     for (let i = 0; i < copy.length; i++) {
       if (copy[i].status === "success") continue;
       copy[i].status = "uploading";
+      copy[i].progress = 0;
       setUploadFiles([...copy]);
 
       const item = copy[i];
-      const formData = new FormData();
-      formData.append("file", item.file);
-      formData.append("path", currentPath);
 
       try {
-        await API.post("/customer/files/upload", formData, {
-          headers: { "Content-Type": "multipart/form-data" },
-          onUploadProgress: (progressEvent) => {
-            const percentCompleted = Math.round((progressEvent.loaded * 100) / (progressEvent.total || progressEvent.loaded));
-            copy[i].progress = percentCompleted;
-            setUploadFiles([...copy]);
-          }
-        });
+        const onProgress = (percent: number) => {
+          copy[i].progress = percent;
+          setUploadFiles([...copy]);
+        };
+
+        if (item.file.size > CHUNK_THRESHOLD) {
+          // Large file → chunked upload
+          await uploadFileChunked(item.file, onProgress);
+        } else {
+          // Small file → direct upload
+          await uploadFileDirect(item.file, onProgress);
+        }
         copy[i].status = "success";
+        copy[i].progress = 100;
       } catch (err: any) {
         copy[i].status = "error";
-        copy[i].error = err.response?.data?.message || "Upload failed.";
+        copy[i].error = err.response?.data?.message || err.message || "Upload failed.";
       }
       setUploadFiles([...copy]);
     }

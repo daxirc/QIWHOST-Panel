@@ -521,7 +521,7 @@ export default function CustomerDns() {
                       <textarea
                         placeholder="e.g. MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA..."
                         value={dkimKey}
-                        onChange={(e) => setDKimKey(e.target.value)}
+                        onChange={(e) => setDkimKey(e.target.value)}
                         rows={4}
                         className="w-full bg-gray-50 border border-gray-200 rounded-lg px-4 py-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary text-gray-800 font-mono"
                       />

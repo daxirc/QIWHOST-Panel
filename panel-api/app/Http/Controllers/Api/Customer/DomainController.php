@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Customer;
 use App\Http\Controllers\Controller;
 use App\Models\Domain;
 use App\Models\HostingAccount;
+use App\Services\DnsZoneSyncService;
 use Illuminate\Http\Request;
 
 class DomainController extends Controller
@@ -37,7 +38,7 @@ class DomainController extends Controller
                 'domain' => $domain->domain,
                 'type' => $domain->is_main ? 'primary' : 'addon',
                 'document_root' => $domain->domain_root ?? $domain->domain_public,
-                'ssl_enabled' => $domain->ssl_enabled ?? false,
+                'is_secure_with_ssl' => (bool) $domain->is_secure_with_ssl,
                 'status' => $domain->status ?? 'active',
             ];
         });
@@ -286,6 +287,16 @@ HTML;
                 'status' => 'active',
             ]);
 
+            // Auto-provision default DNS records for the addon domain
+            DnsZoneSyncService::provisionDefaultRecords($domain);
+
+            // Provision OLS virtual host so the domain serves from its own docroot
+            try {
+                $this->provisionOlsVhost($validated['domain'], $domainRoot);
+            } catch (\Exception $e) {
+                \Log::warning("OLS vhost provisioning warning for {$validated['domain']}: " . $e->getMessage());
+            }
+
             return $this->successResponse($domain, 'Addon domain created successfully.', 201);
 
         } catch (\Exception $e) {
@@ -331,6 +342,16 @@ HTML;
                 // local dev sandbox fallback
             }
 
+            // Remove OLS virtual host configuration
+            try {
+                $this->removeOlsVhost($domain->domain);
+            } catch (\Exception $e) {
+                \Log::warning("OLS vhost removal warning for {$domain->domain}: " . $e->getMessage());
+            }
+
+            // Remove BIND zone for the domain
+            (new DnsZoneSyncService())->removeZone($domain->domain);
+
             $domain->delete();
 
             return $this->successResponse(null, 'Domain deleted successfully.');
@@ -338,5 +359,147 @@ HTML;
         } catch (\Exception $e) {
             return $this->errorResponse($e->getMessage());
         }
+    }
+
+    /**
+     * Provision an OpenLiteSpeed virtual host for a customer domain.
+     * Creates vhost config, adds virtualHost definition and listener mapping.
+     */
+    private function provisionOlsVhost(string $domain, string $docRoot): void
+    {
+        $olsBase = '/usr/local/lsws';
+        $vhostDir = "{$olsBase}/conf/vhosts/{$domain}";
+        $httpdConf = "{$olsBase}/conf/httpd_config.conf";
+
+        // Create vhost config directory
+        $proc = new \Symfony\Component\Process\Process(['sudo', 'mkdir', '-p', $vhostDir]);
+        $proc->run();
+
+        // Write vhconf.conf
+        $vhconf = <<<CONF
+docRoot                   \$VH_ROOT
+enableGzip                1
+
+scripthandler  {
+  add                     lsapi:lsphp php
+}
+
+index  {
+  useServer               0
+  indexFiles              index.php, index.html
+}
+
+context /.well-known/ {
+  location                \$DOC_ROOT/.well-known/
+  allowBrowse             1
+
+  accessControl {
+    allow                 *
+  }
+}
+
+rewrite  {
+  enable                  1
+  rules                   <<<END_rules
+RewriteEngine On
+RewriteCond %{REQUEST_URI} !^/\\.well-known/
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)\$ /index.php [L,QSA]
+  END_rules
+}
+CONF;
+
+        $tmpConf = tempnam(sys_get_temp_dir(), 'ols_vhconf_');
+        file_put_contents($tmpConf, $vhconf);
+        (new \Symfony\Component\Process\Process(['sudo', 'mv', $tmpConf, "{$vhostDir}/vhconf.conf"]))->run();
+        (new \Symfony\Component\Process\Process(['sudo', 'chown', '-R', 'lsadm:nogroup', $vhostDir]))->run();
+
+        // Add virtualHost definition and listener mapping to httpd_config.conf
+        $httpd = file_exists($httpdConf) ? @file_get_contents($httpdConf) : '';
+        if (!$httpd) {
+            // Read via sudo if direct access fails
+            $readProc = new \Symfony\Component\Process\Process(['sudo', 'cat', $httpdConf]);
+            $readProc->run();
+            $httpd = $readProc->getOutput();
+        }
+
+        $changed = false;
+
+        // Add virtualHost block if not exists
+        if (strpos($httpd, "virtualHost {$domain}") === false) {
+            $vhostBlock = <<<BLOCK
+
+virtualHost {$domain} {
+  vhRoot                  {$docRoot}/
+  configFile              conf/vhosts/{$domain}/vhconf.conf
+  allowSymbolLink         1
+  enableScript            1
+  restrained              1
+}
+
+BLOCK;
+            $httpd = str_replace('listener Default{', $vhostBlock . 'listener Default{', $httpd);
+            $changed = true;
+        }
+
+        // Add listener mapping for domain and www.domain
+        if (strpos($httpd, "map                      {$domain} {$domain}") === false) {
+            $httpd = str_replace(
+                "listener Default{\n",
+                "listener Default{\n    map                      {$domain} {$domain}, www.{$domain}\n"
+            , $httpd);
+            $changed = true;
+        }
+
+        if ($changed) {
+            $tmpHttpd = tempnam(sys_get_temp_dir(), 'ols_httpd_');
+            file_put_contents($tmpHttpd, $httpd);
+            (new \Symfony\Component\Process\Process(['sudo', 'mv', $tmpHttpd, $httpdConf]))->run();
+            (new \Symfony\Component\Process\Process(['sudo', 'chown', 'lsadm:nogroup', $httpdConf]))->run();
+
+            // Graceful restart OLS
+            (new \Symfony\Component\Process\Process(['sudo', '/usr/local/lsws/bin/lswsctrl', 'restart']))->run();
+        }
+    }
+
+    /**
+     * Remove OLS virtual host for a customer domain.
+     */
+    private function removeOlsVhost(string $domain): void
+    {
+        $olsBase = '/usr/local/lsws';
+        $vhostDir = "{$olsBase}/conf/vhosts/{$domain}";
+        $httpdConf = "{$olsBase}/conf/httpd_config.conf";
+
+        // Remove vhost config directory
+        (new \Symfony\Component\Process\Process(['sudo', 'rm', '-rf', $vhostDir]))->run();
+
+        // Remove from httpd_config.conf
+        $readProc = new \Symfony\Component\Process\Process(['sudo', 'cat', $httpdConf]);
+        $readProc->run();
+        $httpd = $readProc->getOutput();
+
+        // Remove virtualHost block
+        $httpd = preg_replace(
+            "/\n*virtualHost {$domain} \{[^}]*\}\n*/",
+            "\n",
+            $httpd
+        );
+
+        // Remove listener mapping
+        $httpd = preg_replace(
+            "/\s*map\s+{$domain}\s+{$domain}[^\n]*\n/",
+            "\n",
+            $httpd
+        );
+
+        $tmpHttpd = tempnam(sys_get_temp_dir(), 'ols_httpd_');
+        file_put_contents($tmpHttpd, $httpd);
+        (new \Symfony\Component\Process\Process(['sudo', 'mv', $tmpHttpd, $httpdConf]))->run();
+        (new \Symfony\Component\Process\Process(['sudo', 'chown', 'lsadm:nogroup', $httpdConf]))->run();
+
+        // Graceful restart OLS
+        (new \Symfony\Component\Process\Process(['sudo', '/usr/local/lsws/bin/lswsctrl', 'restart']))->run();
     }
 }

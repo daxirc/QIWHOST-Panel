@@ -6,15 +6,7 @@ const nextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
-  // Proxy API calls through Next.js to avoid Mixed Content
-  async rewrites() {
-    return [
-      {
-        source: '/backend/:path*',
-        destination: 'http://127.0.0.1:8080/:path*',
-      },
-    ];
-  },
+  // No rewrites needed - /backend/ is handled by the API route in src/app/backend/[...path]/route.ts
   headers: async () => [
     {
       source: '/_next/static/(.*)',

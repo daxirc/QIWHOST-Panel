@@ -22,6 +22,7 @@ use App\Http\Controllers\Api\Admin\WordPressController as AdminWordPressControll
 use App\Http\Controllers\Api\Admin\WebmailController as AdminWebmailController;
 use App\Http\Controllers\Api\Admin\NodeJsController as AdminNodeJsController;
 use App\Http\Controllers\Api\Admin\SecurityController as AdminSecurityController;
+use App\Http\Controllers\Api\Admin\BackupController as AdminBackupController;
 
 // Import Customer Controllers
 use App\Http\Controllers\Api\Customer\AuthController as CustomerAuthController;
@@ -88,6 +89,10 @@ Route::middleware('auth.admin')->prefix('admin')->group(function () {
     Route::get('/settings/hostname-ssl/status', [AdminSettingsController::class, 'hostnameSslStatus']);
     Route::get('/settings/hostname-ssl/info', [AdminSettingsController::class, 'getHostnameSslInfo']);
 
+    // Backup Remote Server Settings
+    Route::get('/settings/backup', [AdminSettingsController::class, 'getBackupSettings']);
+    Route::post('/settings/backup', [AdminSettingsController::class, 'saveBackupSettings']);
+
     // Email System Routes
     Route::get('/email-system/domains', [AdminEmailSystemController::class, 'getDomains']);
     Route::post('/email-system/configure/{domain}', [AdminEmailSystemController::class, 'configureDomain']);
@@ -103,6 +108,15 @@ Route::middleware('auth.admin')->prefix('admin')->group(function () {
     Route::post('/files/create', [AdminFileManagerController::class, 'createFileOrFolder']);
     Route::post('/files/upload', [AdminFileManagerController::class, 'upload']);
     Route::delete('/files', [AdminFileManagerController::class, 'delete']);
+    Route::post('/files/rename', [AdminFileManagerController::class, 'rename']);
+    Route::post('/files/move', [AdminFileManagerController::class, 'move']);
+    Route::post('/files/copy', [AdminFileManagerController::class, 'copy']);
+    Route::get('/files/download', [AdminFileManagerController::class, 'download']);
+    Route::post('/files/download-zip', [AdminFileManagerController::class, 'downloadZip']);
+    Route::post('/files/compress', [AdminFileManagerController::class, 'compress']);
+    Route::post('/files/extract', [AdminFileManagerController::class, 'extract']);
+    Route::post('/files/chmod', [AdminFileManagerController::class, 'chmod']);
+    Route::get('/files/search', [AdminFileManagerController::class, 'search']);
 
     // Admin PHP Manager Routes
     Route::get('/php/versions', [AdminPhpManagerController::class, 'getPhpVersions']);
@@ -130,6 +144,10 @@ Route::middleware('auth.admin')->prefix('admin')->group(function () {
     // Admin WordPress Installations Routes
     Route::get('/wordpress', [AdminWordPressController::class, 'index']);
     Route::get('/wordpress/stats', [AdminWordPressController::class, 'getStats']);
+    Route::post('/wordpress/{id}/force-update', [AdminWordPressController::class, 'forceUpdateCore']);
+    Route::post('/wordpress/{id}/toggle-auto-update', [AdminWordPressController::class, 'toggleAutoUpdate']);
+    Route::delete('/wordpress/{id}/force-delete', [AdminWordPressController::class, 'forceDelete']);
+    Route::post('/wordpress/refresh-versions', [AdminWordPressController::class, 'refreshVersions']);
 
     // Admin Node.js Routes
     Route::get('/nodejs', [AdminNodeJsController::class, 'index']);
@@ -140,6 +158,16 @@ Route::middleware('auth.admin')->prefix('admin')->group(function () {
     Route::post('/security/scan', [AdminSecurityController::class, 'runScan']);
     Route::delete('/security/quarantine/{id}', [AdminSecurityController::class, 'deleteQuarantined']);
     Route::post('/security/quarantine/{id}/restore', [AdminSecurityController::class, 'restore']);
+
+    // Admin Backup Routes
+    Route::get('/backups', [AdminBackupController::class, 'index']);
+    Route::post('/backups', [AdminBackupController::class, 'create']);
+    Route::get('/backups/stats', [AdminBackupController::class, 'stats']);
+    Route::get('/backups/{id}/download', [AdminBackupController::class, 'download']);
+    Route::post('/backups/{id}/restore', [AdminBackupController::class, 'restore']);
+    Route::delete('/backups/{id}', [AdminBackupController::class, 'destroy']);
+    Route::post('/backups/run-all', [AdminBackupController::class, 'runAll']);
+    Route::post('/backups/test-connection', [AdminBackupController::class, 'testConnection']);
 });
 
 // ==========================================
@@ -163,6 +191,8 @@ Route::middleware(['auth:sanctum', 'enforce.limits', 'rate.customer'])->prefix('
     Route::post('/files/write', [CustomerFileManagerController::class, 'writeFile']);
     Route::post('/files/create', [CustomerFileManagerController::class, 'createFileOrFolder']);
     Route::post('/files/upload', [CustomerFileManagerController::class, 'upload']);
+    Route::post('/files/upload-chunk-init', [CustomerFileManagerController::class, 'uploadChunkInit']);
+    Route::post('/files/upload-chunk', [CustomerFileManagerController::class, 'uploadChunk']);
     Route::delete('/files', [CustomerFileManagerController::class, 'delete']);
     Route::get('/files/download', [CustomerFileManagerController::class, 'download']);
     Route::post('/files/download-zip', [CustomerFileManagerController::class, 'downloadZip']);
@@ -223,8 +253,25 @@ Route::middleware(['auth:sanctum', 'enforce.limits', 'rate.customer'])->prefix('
     Route::get('/backups', [CustomerBackupController::class, 'index']);
     Route::post('/backups', [CustomerBackupController::class, 'create']);
     Route::get('/backups/{id}/download', [CustomerBackupController::class, 'download']);
+    Route::post('/backups/{id}/restore', [CustomerBackupController::class, 'restore']);
+    Route::delete('/backups/{id}', [CustomerBackupController::class, 'destroy']);
     
     Route::get('/stats', [CustomerStatsController::class, 'index']);
+
+    // Customer DNS Zone Management Routes
+    Route::get('/dns', [CustomerDnsRecordController::class, 'index']);
+    Route::post('/dns', [CustomerDnsRecordController::class, 'store']);
+    Route::put('/dns/{id}', [CustomerDnsRecordController::class, 'update']);
+    Route::delete('/dns/{id}', [CustomerDnsRecordController::class, 'destroy']);
+    Route::post('/dns/{domainId}/email-wizard', [CustomerDnsRecordController::class, 'generateEmailSpamProtection']);
+
+    // Customer Email Routes
+    Route::get('/emails', [CustomerEmailController::class, 'index']);
+    Route::post('/emails', [CustomerEmailController::class, 'store']);
+    Route::get('/emails/{id}', [CustomerEmailController::class, 'show']);
+    Route::put('/emails/{id}', [CustomerEmailController::class, 'update']);
+    Route::delete('/emails/{id}', [CustomerEmailController::class, 'destroy']);
+    Route::post('/emails/{id}/change-password', [CustomerEmailController::class, 'changePassword']);
 
     // Customer Node.js Routes
     Route::prefix('nodejs')->group(function() {

@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\DnsRecord;
 use App\Models\Domain;
 use Illuminate\Http\Request;
+use App\Models\Setting;
+use App\Services\DnsZoneSyncService;
 
 class DnsRecordController extends Controller
 {
@@ -66,6 +68,9 @@ class DnsRecordController extends Controller
             'priority' => $validated['priority'] ?? null,
         ]);
 
+        // Sync zone to BIND
+        (new DnsZoneSyncService())->syncZone($validated['domain_id']);
+
         return $this->successResponse($record, 'DNS record created successfully.', 201);
     }
 
@@ -98,6 +103,9 @@ class DnsRecordController extends Controller
 
         $record->update($validated);
 
+        // Sync zone to BIND
+        (new DnsZoneSyncService())->syncZone($record->domain_id);
+
         return $this->successResponse($record, 'DNS record updated successfully.');
     }
 
@@ -109,7 +117,11 @@ class DnsRecordController extends Controller
             return $this->errorResponse('DNS record not found.', null, 404);
         }
 
+        $domainIdForSync = $record->domain_id;
         $record->delete();
+
+        // Sync zone to BIND
+        (new DnsZoneSyncService())->syncZone($domainIdForSync);
 
         return $this->successResponse(null, 'DNS record deleted successfully.');
     }
@@ -119,11 +131,17 @@ class DnsRecordController extends Controller
         $domain = Domain::with('hostingAccount')->findOrFail($domainId);
         $records = DnsRecord::where('domain_id', $domainId)->get();
         
-        $ns1 = 'ns1.node1.qiwhost.com.';
-        $ns2 = 'ns2.node1.qiwhost.com.';
-        $adminEmail = 'admin.' . str_replace('.', '', $domain->domain) . '.';
+        $ns1Raw = Setting::where('key', 'nameserver_1')->value('value')
+            ?? Setting::where('key', 'ns1')->value('value')
+            ?? 'ns1.node1.qiwhost.com';
+        $ns2Raw = Setting::where('key', 'nameserver_2')->value('value')
+            ?? Setting::where('key', 'ns2')->value('value')
+            ?? 'ns2.node1.qiwhost.com';
+        $ns1 = rtrim($ns1Raw, '.') . '.';
+        $ns2 = rtrim($ns2Raw, '.') . '.';
+        $adminEmail = 'admin.' . rtrim($domain->domain, '.') . '.';
         
-        $serial = date('Ymd') . '01';
+        $serial = date('Ymd') . str_pad(rand(1, 99), 2, '0', STR_PAD_LEFT);
         
         $zoneFile = "; BIND Zone file for {$domain->domain}\n";
         $zoneFile .= "; Generated dynamically by QIWHOST Panel on " . date('Y-m-d H:i:s') . "\n\n";

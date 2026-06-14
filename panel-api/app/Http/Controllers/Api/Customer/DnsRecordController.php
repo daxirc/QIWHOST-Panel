@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\DnsRecord;
 use App\Models\Domain;
 use App\Models\HostingAccount;
+use App\Services\DnsZoneSyncService;
 use Illuminate\Http\Request;
 
 class DnsRecordController extends Controller
@@ -78,6 +79,9 @@ class DnsRecordController extends Controller
                 'priority' => $validated['priority'] ?? null,
             ]);
 
+            // Sync zone to BIND
+            (new DnsZoneSyncService())->syncZone($validated['domain_id']);
+
             return $this->successResponse($record, 'DNS record created successfully.', 201);
 
         } catch (\Exception $e) {
@@ -125,6 +129,9 @@ class DnsRecordController extends Controller
 
             $record->update($validated);
 
+            // Sync zone to BIND
+            (new DnsZoneSyncService())->syncZone($record->domain_id);
+
             return $this->successResponse($record, 'DNS record updated successfully.');
 
         } catch (\Exception $e) {
@@ -154,7 +161,11 @@ class DnsRecordController extends Controller
                 return $this->errorResponse('Deleting primary root A or NS records is not allowed as it will break your domain hosting.', null, 400);
             }
 
+            $domainIdForSync = $record->domain_id;
             $record->delete();
+
+            // Sync zone to BIND
+            (new DnsZoneSyncService())->syncZone($domainIdForSync);
 
             return $this->successResponse(null, 'DNS record deleted successfully.');
 
@@ -214,7 +225,7 @@ class DnsRecordController extends Controller
                 $spfFail = '?all';
             }
 
-            $spfValue = "v=spf1{$spfA}{$spfMX}{$spfIps} ~all"; // standard secure base
+            $spfValue = "v=spf1{$spfA}{$spfMX}{$spfIps} {$spfFail}";
             
             // Delete existing SPF TXT record for this domain if exists
             DnsRecord::where('domain_id', $domain->id)
@@ -275,6 +286,9 @@ class DnsRecordController extends Controller
                 ]);
                 $recordsCreated[] = $dkimRecord;
             }
+
+            // Sync zone to BIND
+            (new DnsZoneSyncService())->syncZone($domain->id);
 
             return $this->successResponse($recordsCreated, 'Anti-Spam Email Protection DNS records provisioned successfully!');
 

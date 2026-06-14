@@ -99,6 +99,35 @@ class FileManagerController extends Controller
         } catch (\Exception $e) {}
     }
 
+    /**
+     * Fix permissions recursively on a directory using a single shell command.
+     * Much faster than calling fixPermissions() per-file for large extractions.
+     */
+    private function fixPermissionsRecursive(HostingAccount $account, $dirPath)
+    {
+        try {
+            // Recursive chown in one go
+            $chown = new \Symfony\Component\Process\Process(
+                ['sudo', 'chown', '-R', "{$account->system_username}:www-data", $dirPath]
+            );
+            $chown->setTimeout(120);
+            $chown->run();
+
+            // Set dirs to 775, files to 664 in one go
+            $findDirs = new \Symfony\Component\Process\Process(
+                ['sudo', 'find', $dirPath, '-type', 'd', '-exec', 'chmod', '775', '{}', '+']
+            );
+            $findDirs->setTimeout(120);
+            $findDirs->run();
+
+            $findFiles = new \Symfony\Component\Process\Process(
+                ['sudo', 'find', $dirPath, '-type', 'f', '-exec', 'chmod', '664', '{}', '+']
+            );
+            $findFiles->setTimeout(120);
+            $findFiles->run();
+        } catch (\Exception $e) {}
+    }
+
     public function list(Request $request)
     {
         try {
@@ -275,6 +304,8 @@ class FileManagerController extends Controller
     public function upload(Request $request)
     {
         try {
+            set_time_limit(300);
+
             $account = $this->getHostingAccount($request);
             $destinationDir = $request->input('path', 'public_html');
             
@@ -324,6 +355,133 @@ class FileManagerController extends Controller
         } catch (\Exception $e) {
             return $this->errorResponse($e->getMessage());
         }
+    }
+
+    /**
+     * Chunked Upload: Initialize a new chunked upload session
+     */
+    public function uploadChunkInit(Request $request)
+    {
+        try {
+            $account = $this->getHostingAccount($request);
+            $filename = $request->input('filename');
+            $totalSize = (int) $request->input('total_size', 0);
+            $totalChunks = (int) $request->input('total_chunks', 0);
+            $destinationDir = $request->input('path', 'public_html');
+
+            if (!$filename) {
+                return $this->errorResponse('Filename is required.');
+            }
+
+            $uploadId = uniqid('upload_', true);
+            $tempDir = sys_get_temp_dir() . '/qiwhost_chunks/' . $uploadId;
+            @mkdir($tempDir, 0755, true);
+
+            // Store session info
+            \Cache::put('chunk_upload_' . $uploadId, [
+                'filename' => $filename,
+                'total_size' => $totalSize,
+                'total_chunks' => $totalChunks,
+                'received_chunks' => 0,
+                'destination' => $destinationDir,
+                'temp_dir' => $tempDir,
+                'account_id' => $account->id,
+                'system_username' => $account->system_username,
+            ], 3600); // 1 hour TTL
+
+            return $this->successResponse(['upload_id' => $uploadId], 'Upload session initialized.');
+        } catch (\Exception $e) {
+            return $this->errorResponse($e->getMessage());
+        }
+    }
+
+    /**
+     * Chunked Upload: Receive a single chunk
+     */
+    public function uploadChunk(Request $request)
+    {
+        try {
+            $uploadId = $request->input('upload_id');
+            $chunkIndex = (int) $request->input('chunk_index');
+
+            if (!$uploadId || !$request->hasFile('chunk')) {
+                return $this->errorResponse('Upload ID and chunk file are required.');
+            }
+
+            $session = \Cache::get('chunk_upload_' . $uploadId);
+            if (!$session) {
+                return $this->errorResponse('Upload session expired or not found.', null, 404);
+            }
+
+            // Verify the request belongs to the same account
+            $account = $this->getHostingAccount($request);
+            if ($account->id !== $session['account_id']) {
+                return $this->errorResponse('Unauthorized upload session.', null, 403);
+            }
+
+            // Save chunk to temp directory
+            $chunk = $request->file('chunk');
+            $chunk->move($session['temp_dir'], 'chunk_' . str_pad($chunkIndex, 6, '0', STR_PAD_LEFT));
+
+            // Update received count
+            $session['received_chunks'] = $session['received_chunks'] + 1;
+            \Cache::put('chunk_upload_' . $uploadId, $session, 3600);
+
+            // If all chunks received, assemble the file
+            if ($session['received_chunks'] >= $session['total_chunks']) {
+                return $this->assembleChunks($uploadId, $session, $account);
+            }
+
+            return $this->successResponse([
+                'received' => $session['received_chunks'],
+                'total' => $session['total_chunks'],
+            ], 'Chunk received.');
+        } catch (\Exception $e) {
+            return $this->errorResponse($e->getMessage());
+        }
+    }
+
+    /**
+     * Assemble all chunks into the final file
+     */
+    private function assembleChunks($uploadId, $session, $account)
+    {
+        $jailedDir = $this->getJailedPath($account, $session['destination']);
+        if (!File::exists($jailedDir)) {
+            File::makeDirectory($jailedDir, 0755, true);
+            $this->fixPermissions($account, $jailedDir);
+        }
+
+        // Sanitize filename
+        $scanner = new \App\Services\SecurityScanner();
+        $filename = $scanner->sanitizeFilename($session['filename']);
+        $finalPath = rtrim($jailedDir, '/') . '/' . $filename;
+
+        // Assemble chunks in order
+        $outputFile = fopen($finalPath, 'wb');
+        if (!$outputFile) {
+            return $this->errorResponse('Failed to create output file.');
+        }
+
+        $chunkFiles = glob($session['temp_dir'] . '/chunk_*');
+        sort($chunkFiles); // Sort to ensure correct order
+
+        foreach ($chunkFiles as $chunkFile) {
+            $chunkData = file_get_contents($chunkFile);
+            fwrite($outputFile, $chunkData);
+            unlink($chunkFile); // Clean up chunk
+        }
+
+        fclose($outputFile);
+
+        // Clean up temp directory
+        @rmdir($session['temp_dir']);
+        \Cache::forget('chunk_upload_' . $uploadId);
+
+        // Fix permissions
+        $this->fixPermissions($account, $finalPath);
+
+        return $this->successResponse(null, 'File uploaded and assembled successfully.');
     }
 
     public function delete(Request $request)
@@ -613,6 +771,9 @@ class FileManagerController extends Controller
     public function extract(Request $request)
     {
         try {
+            // Extend PHP execution time for large archives
+            set_time_limit(600);
+
             $account = $this->getHostingAccount($request);
             $zipPath = $request->input('path');
             $destPath = $request->input('destination');
@@ -643,22 +804,17 @@ class FileManagerController extends Controller
 
             $zip = new \ZipArchive();
             if ($zip->open($zipJailed) === true) {
-                $extractedFiles = [];
-                for ($i = 0; $i < $zip->numFiles; $i++) {
-                    $extractedFiles[] = $zip->getNameIndex($i);
-                }
+                $fileCount = $zip->numFiles;
 
                 $zip->extractTo($destJailed);
                 $zip->close();
 
-                foreach ($extractedFiles as $file) {
-                    $this->fixPermissions($account, $destJailed . '/' . $file);
-                }
-                $this->fixPermissions($account, $destJailed);
+                // Fix permissions recursively in one go instead of per-file
+                $this->fixPermissionsRecursive($account, $destJailed);
 
                 return $this->successResponse([
-                    'extracted' => $extractedFiles
-                ], "Archive extracted successfully.");
+                    'file_count' => $fileCount
+                ], "Archive extracted successfully ({$fileCount} files).");
             } else {
                 return $this->errorResponse("Failed to open ZIP archive.");
             }

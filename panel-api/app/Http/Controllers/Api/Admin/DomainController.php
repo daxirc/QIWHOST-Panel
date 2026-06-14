@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Domain;
 use App\Models\HostingAccount;
+use App\Services\DnsZoneSyncService;
 use Illuminate\Http\Request;
 
 class DomainController extends Controller
@@ -61,6 +62,9 @@ class DomainController extends Controller
         if ($domain->is_main) {
             return $this->errorResponse('Cannot delete the primary hosting domain from this panel. Please terminate the hosting subscription instead.');
         }
+
+        // Remove BIND zone for the domain
+        (new DnsZoneSyncService())->removeZone($domain->domain);
 
         $domain->delete();
 
